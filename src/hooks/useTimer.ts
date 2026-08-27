@@ -47,28 +47,27 @@ export function useTimer(onTomato: () => void, onSessionComplete?: () => void) {
         const completed = modeRef.current;
         stopDrops();
         sessionCompleteRef.current?.();
-        if (completed === "focus") tomatoRef.current();
-        const nextMode: TimerMode = completed === "focus" ? "break" : "focus";
-        modeRef.current = nextMode; setMode(nextMode); setRemaining(CONFIG.durations[nextMode]);
-        if (autoLoopRef.current) {
-          deadline.current = Date.now() + CONFIG.durations[nextMode] * 1000;
-          if (nextMode === "focus") scheduleFocus();
-          if (debugRef.current) debugDrop.current = setInterval(() => tomatoRef.current(), CONFIG.debugDropInterval);
+        if (completed === "focus") {
+          tomatoRef.current();
+          modeRef.current = "break"; setMode("break"); setRemaining(CONFIG.durations.break);
+          deadline.current = Date.now() + CONFIG.durations.break * 1000;
+          runningRef.current = true; setRunning(true);
         } else {
+          modeRef.current = "focus"; setMode("focus"); setRemaining(CONFIG.durations.focus);
           runningRef.current = false; setRunning(false);
           if (timer.current) clearInterval(timer.current); timer.current = null;
         }
       }
     }, 250);
     scheduleFocus();
-    if (debugRef.current) debugDrop.current = setInterval(() => tomatoRef.current(), CONFIG.debugDropInterval);
+    if (debugRef.current && modeRef.current === "focus") debugDrop.current = setInterval(() => tomatoRef.current(), CONFIG.debugDropInterval);
   }, [scheduleFocus, stopDrops]);
   const selectMode = useCallback((next: TimerMode) => { pause(); modeRef.current = next; setMode(next); setRemaining(CONFIG.durations[next]); }, [pause]);
   const reset = useCallback(() => { pause(); setRemaining(CONFIG.durations[modeRef.current]); }, [pause]);
   const toggleDebug = useCallback(() => {
     const enabled = !debugRef.current; debugRef.current = enabled; setDebugEnabled(enabled);
     if (debugDrop.current) clearInterval(debugDrop.current); debugDrop.current = null;
-    if (enabled && runningRef.current) debugDrop.current = setInterval(() => tomatoRef.current(), CONFIG.debugDropInterval);
+    if (enabled && runningRef.current && modeRef.current === "focus") debugDrop.current = setInterval(() => tomatoRef.current(), CONFIG.debugDropInterval);
   }, []);
   const toggleAutoLoop = useCallback(() => {
     autoLoopRef.current = !autoLoopRef.current;

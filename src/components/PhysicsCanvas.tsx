@@ -13,6 +13,10 @@ type Props = {
   hydrated: boolean;
   onBonusTomato: (golden: boolean) => void;
   onGoldenTomatoDrop: () => void;
+  activeBuffs: { doubleDrop: boolean; balloonBoost: boolean; goldBoost: boolean };
+  isUfoUnlocked: boolean;
+  timerMode: "focus" | "break";
+  isTimerRunning: boolean;
 };
 type CameraBounds = { left: number; right: number; top: number; bottom: number };
 type BirdDelivery = {
@@ -34,20 +38,47 @@ type BalloonEvent = {
   enteredViewport: boolean;
   nextDropAt: number;
 };
+type UfoEvent = {
+  startedAt: number;
+  hoverDuration: number;
+  entryDuration: number;
+  exitDuration: number;
+  direction: 1 | -1;
+  nextDropAt: number;
+};
+const MIN_DYNAMIC_CAMERA_SCALE = 0.08;
+const UFO_CHECK_INTERVAL_MS = 45_000;
+const UFO_APPEARANCE_CHANCE = 0.03;
+const DEEP_CORE_BODY_THRESHOLD = 1_000;
+const DEEP_CORE_INSET = 300;
+const DEEP_CORE_EVALUATION_INTERVAL = 60;
 
 export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function PhysicsCanvas(
-  { counts, hydrated, onBonusTomato, onGoldenTomatoDrop }, ref,
+  {
+    counts,
+    hydrated,
+    onBonusTomato,
+    onGoldenTomatoDrop,
+    activeBuffs,
+    isUfoUnlocked,
+    timerMode,
+    isTimerRunning,
+  }, ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const addRef = useRef<(golden?: boolean, settled?: boolean) => void>(() => undefined);
   const removeGoldenRef = useRef<(count: number) => number>(() => 0);
-  const currentScale = useRef<number>(CONFIG.world.initialCameraScale);
-  const targetScale = useRef<number>(CONFIG.world.initialCameraScale);
-  const totalCount = useRef(0);
+  const currentScale = useRef<number>(1);
+  const targetScale = useRef<number>(1);
   const camera = useRef<CameraBounds>({ left: 0, right: 1, top: 0, bottom: 1 });
   const bonusTomatoRef = useRef(onBonusTomato);
   const goldenDropRef = useRef(onGoldenTomatoDrop);
+  const activeBuffsRef = useRef(activeBuffs);
+  const isUfoUnlockedRef = useRef(isUfoUnlocked);
+  const isFocusRunningRef = useRef(timerMode === "focus" && isTimerRunning);
+  const breakModeRef = useRef(timerMode === "break");
+  const themeDirtyRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
     drop: (golden) => addRef.current(golden),
@@ -55,11 +86,13 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
   }), []);
   useEffect(() => { bonusTomatoRef.current = onBonusTomato; }, [onBonusTomato]);
   useEffect(() => { goldenDropRef.current = onGoldenTomatoDrop; }, [onGoldenTomatoDrop]);
-
+  useEffect(() => { activeBuffsRef.current = activeBuffs; }, [activeBuffs]);
+  useEffect(() => { isUfoUnlockedRef.current = isUfoUnlocked; }, [isUfoUnlocked]);
   useEffect(() => {
-    const total = counts.normal + counts.gold;
-    totalCount.current = total;
-  }, [counts]);
+    isFocusRunningRef.current = timerMode === "focus" && isTimerRunning;
+    breakModeRef.current = timerMode === "break";
+    themeDirtyRef.current = true;
+  }, [isTimerRunning, timerMode]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -67,14 +100,13 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     if (!container || !canvas || !hydrated) return;
     const toolbar = container.parentElement?.querySelector<HTMLElement>("[data-control-toolbar]");
 
-    const { Engine, Runner, Bodies, Body, Composite } = Matter;
+    const { Engine, Bodies, Body, Composite } = Matter;
     const engine = Engine.create({
       enableSleeping: true,
       positionIterations: 10,
       velocityIterations: 10,
       gravity: { x: 0, y: 1.05 },
     });
-    const runner = Runner.create();
     const context = canvas.getContext("2d");
     if (!context) return;
 
@@ -86,8 +118,15 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     const activeBodies = new Set<Matter.Body>();
     const sleepingBodies = new Set<Matter.Body>();
     const pendingSleeping = new Set<Matter.Body>();
+    const staticCoreBodies = new Set<Matter.Body>();
     const birdDeliveries: BirdDelivery[] = [];
     const balloonEvents: BalloonEvent[] = [];
+    const ufoEvents: UfoEvent[] = [];
+    const deferredDeliveries: boolean[] = [];
+    let ufoEventTime = performance.now();
+    let previousFrameTime = performance.now();
+    let nextUfoCheckAt = ufoEventTime + UFO_CHECK_INTERVAL_MS;
+    let coreEvaluationFrame = 0;
     let cachedSleeping = new Set<Matter.Body>();
     let sleepingCacheDirty = true;
     let forceCacheRefresh = false;
@@ -188,7 +227,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         density: 0.005,
         slop: 0.05,
         sleepThreshold: 30,
-        label: "tomato", plugin: { tomato: { golden, radius } },
+        label: "tomato", plugin: { tomato: { golden, radius, createdAt: performance.now() } },
       });
       Body.setAngularVelocity(body, (Math.random() - 0.5) * 0.12);
       Composite.add(engine.world, body);
@@ -216,14 +255,18 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       return baseRadius;
     };
 
-    const createTomatoSpec = (golden?: boolean): TomatoSpec => ({
-      golden: golden ?? Math.random() < CONFIG.goldenChance,
-      radius: createRadius(),
-    });
+    const createTomatoSpec = (golden?: boolean): TomatoSpec => {
+      const goldenChance = activeBuffsRef.current.goldBoost ? CONFIG.goldenChance * 2 : CONFIG.goldenChance;
+      return {
+        golden: golden ?? Math.random() < goldenChance,
+        radius: createRadius(),
+      };
+    };
 
-    const queueBirdDelivery = (golden = false) => {
-      if (Math.random() < 0.01) {
-        const startedAt = performance.now();
+    const startDelivery = (golden = false) => {
+      const balloonChance = activeBuffsRef.current.balloonBoost ? 0.02 : 0.01;
+      if (Math.random() < balloonChance) {
+        const startedAt = ufoEventTime;
         balloonEvents.push({
           startedAt,
           duration: 13_000 + Math.random() * 2_000,
@@ -236,7 +279,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         return;
       }
       birdDeliveries.push({
-        startedAt: performance.now(),
+        startedAt: ufoEventTime,
         duration: 2200 + Math.random() * 600,
         releaseAt: 0.38 + Math.random() * 0.24,
         direction: Math.random() < 0.5 ? 1 : -1,
@@ -244,6 +287,14 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         radius: createTomatoSpec(golden).radius,
         released: false,
       });
+    };
+    const queueBirdDelivery = (golden = false) => {
+      if (!isFocusRunningRef.current) return;
+      if (ufoEvents.length > 0) {
+        deferredDeliveries.push(golden);
+        return;
+      }
+      startDelivery(golden);
     };
     addRef.current = queueBirdDelivery;
 
@@ -263,6 +314,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         activeBodies.delete(body);
         sleepingBodies.delete(body);
         pendingSleeping.delete(body);
+        staticCoreBodies.delete(body);
         if (cachedSleeping.delete(body)) removedCachedBody = true;
       }
       if (removedCachedBody) {
@@ -275,6 +327,69 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       return goldenBodies.length;
     };
     removeGoldenRef.current = removeGoldenTomatoes;
+
+    const restoreStaticCoreBodies = () => {
+      if (!staticCoreBodies.size) return;
+      staticCoreBodies.forEach((body) => {
+        Body.setStatic(body, false);
+        Matter.Sleeping.set(body, false);
+        sleepingBodies.delete(body);
+        pendingSleeping.delete(body);
+        activeBodies.add(body);
+      });
+      staticCoreBodies.clear();
+      sleepingCacheDirty = true;
+      forceCacheRefresh = true;
+    };
+
+    const optimizeDeepCore = (now: number) => {
+      const visibleBounds = camera.current;
+      const visibleTomatoBodies = [...activeBodies, ...sleepingBodies].filter((body) =>
+        body.bounds.max.x >= visibleBounds.left
+        && body.bounds.min.x <= visibleBounds.right
+        && body.bounds.max.y >= visibleBounds.top
+        && body.bounds.min.y <= visibleBounds.bottom,
+      );
+      const tomatoBodyCount = visibleTomatoBodies.length;
+      if (tomatoBodyCount <= DEEP_CORE_BODY_THRESHOLD) {
+        restoreStaticCoreBodies();
+        return;
+      }
+
+      const stationaryBodies = visibleTomatoBodies.filter((body) => {
+        if (body.isStatic || body.isSleeping) return true;
+        const tomato = body.plugin.tomato as { createdAt?: number } | undefined;
+        const createdAt = tomato?.createdAt ?? now;
+        return now - createdAt >= 2_000 && body.speed < 0.05 && body.position.y > height * 0.4;
+      });
+      if (!stationaryBodies.length) return;
+
+      const leftEdge = Math.min(...stationaryBodies.map((body) => body.bounds.min.x));
+      const rightEdge = Math.max(...stationaryBodies.map((body) => body.bounds.max.x));
+      const topEdge = Math.min(...stationaryBodies.map((body) => body.bounds.min.y));
+      const floorEdge = floor.bounds.min.y;
+      let changed = false;
+
+      stationaryBodies.forEach((body) => {
+        if (body.isStatic
+          || body.bounds.min.x < leftEdge + DEEP_CORE_INSET
+          || body.bounds.max.x > rightEdge - DEEP_CORE_INSET
+          || body.bounds.min.y < topEdge + DEEP_CORE_INSET
+          || body.bounds.max.y > floorEdge - DEEP_CORE_INSET) return;
+        Body.setStatic(body, true);
+        activeBodies.delete(body);
+        sleepingBodies.add(body);
+        pendingSleeping.add(body);
+        staticCoreBodies.add(body);
+        changed = true;
+      });
+
+      if (changed) {
+        settledPileTop = Math.min(settledPileTop, topEdge);
+        sleepingCacheDirty = true;
+        forceCacheRefresh = true;
+      }
+    };
 
     const drawTomato = (
       target: CanvasRenderingContext2D,
@@ -395,6 +510,29 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       context.restore();
     };
 
+    const drawUfo = (x: number, y: number, size: number) => {
+      context.save();
+      context.translate(x, y);
+      context.fillStyle = "rgba(255, 255, 255, 0.25)";
+      context.beginPath();
+      context.ellipse(0, -size * 0.25, size * 0.48, size * 0.38, 0, Math.PI, Math.PI * 2);
+      context.fill();
+      context.beginPath();
+      context.moveTo(-size, 0);
+      context.lineTo(-size * 0.58, -size * 0.28);
+      context.lineTo(size * 0.58, -size * 0.28);
+      context.lineTo(size, 0);
+      context.lineTo(size * 0.55, size * 0.3);
+      context.lineTo(-size * 0.55, size * 0.3);
+      context.closePath();
+      context.fill();
+      context.fillStyle = "rgba(239, 83, 80, 0.65)";
+      for (const lightX of [-0.55, 0, 0.55]) {
+        context.fillRect(lightX * size - size * 0.08, size * 0.02, size * 0.16, size * 0.12);
+      }
+      context.restore();
+    };
+
     function buildBackgroundCanvas() {
       if (!backgroundContext) return;
       const ppm = CONFIG.world.pixelsPerMeter;
@@ -408,7 +546,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       const sy = backgroundCanvas.height / backgroundWorld.height;
       backgroundContext.setTransform(sx, 0, 0, sy, -backgroundWorld.left * sx, -backgroundWorld.top * sy);
       backgroundContext.clearRect(backgroundWorld.left, backgroundWorld.top, backgroundWorld.width, backgroundWorld.height);
-      backgroundContext.strokeStyle = "rgba(255, 255, 255, 0.12)";
+      backgroundContext.strokeStyle = breakModeRef.current ? "rgba(0, 0, 0, 0.12)" : "rgba(255, 255, 255, 0.12)";
       backgroundContext.lineCap = "round";
       backgroundContext.lineJoin = "round";
       const ground = height;
@@ -526,20 +664,67 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     for (let i = 0; i < visible; i++) createTomato(i < goldVisible, true);
 
     const render = (now: number) => {
-      const tomatoDiameter = CONFIG.world.tomatoDiameterMeters * CONFIG.world.pixelsPerMeter;
-      const estimatedPileHeight = tomatoDiameter * Math.sqrt(totalCount.current * CONFIG.world.pilePackingFactor);
-      const measuredPileHeight = Number.isFinite(settledPileTop) ? Math.max(0, height - settledPileTop) : 0;
-      const requiredWorldHeight = Math.max(
-        height,
-        estimatedPileHeight * CONFIG.world.cameraPadding,
-        measuredPileHeight * CONFIG.world.cameraPadding,
-      );
-      // 下限を設けない。山が高くなるほど0へ向かって後退し続ける。
-      targetScale.current = Math.min(
-        CONFIG.world.initialCameraScale,
-        height / requiredWorldHeight,
-      );
-      currentScale.current += (targetScale.current - currentScale.current) * 0.05;
+      const frameDelta = Math.min(100, Math.max(0, now - previousFrameTime));
+      previousFrameTime = now;
+      ufoEventTime += frameDelta;
+      const ufoNow = ufoEventTime;
+      Engine.update(engine, 1000 / 60);
+      if (themeDirtyRef.current) {
+        buildBackgroundCanvas();
+        themeDirtyRef.current = false;
+      }
+      if (isFocusRunningRef.current
+        && ufoEvents.length === 0
+        && birdDeliveries.length === 0
+        && balloonEvents.length === 0
+        && deferredDeliveries.length > 0) {
+        startDelivery(deferredDeliveries.shift() ?? false);
+      }
+      coreEvaluationFrame += 1;
+      if (coreEvaluationFrame % DEEP_CORE_EVALUATION_INTERVAL === 0) optimizeDeepCore(now);
+      let leftmostPoint = Number.POSITIVE_INFINITY;
+      let rightmostPoint = Number.NEGATIVE_INFINITY;
+      let highestPoint = Number.POSITIVE_INFINITY;
+      const includeBodyBounds = (body: Matter.Body) => {
+        leftmostPoint = Math.min(leftmostPoint, body.bounds.min.x);
+        rightmostPoint = Math.max(rightmostPoint, body.bounds.max.x);
+        highestPoint = Math.min(highestPoint, body.bounds.min.y - 25);
+      };
+      activeBodies.forEach((body) => {
+        const tomato = body.plugin.tomato as { createdAt?: number } | undefined;
+        const createdAt = tomato?.createdAt ?? now;
+        if (body.isSleeping || (now - createdAt >= 2_000 && body.speed < 0.1 && body.position.y > height * 0.4)) {
+          includeBodyBounds(body);
+        }
+      });
+      sleepingBodies.forEach(includeBodyBounds);
+      if (Number.isFinite(leftmostPoint) && Number.isFinite(rightmostPoint) && Number.isFinite(highestPoint)) {
+        const centerX = width / 2;
+        const horizontalMargin = width * 0.1;
+        const safeLeft = horizontalMargin;
+        const safeRight = width - horizontalMargin;
+        const safeTop = height * 0.3;
+        const screenLeft = centerX + (leftmostPoint - centerX) * currentScale.current;
+        const screenRight = centerX + (rightmostPoint - centerX) * currentScale.current;
+        const screenTop = height + (highestPoint - height) * currentScale.current;
+        if (screenLeft < safeLeft || screenRight > safeRight || screenTop < safeTop) {
+          const leftDistance = Math.max(0, centerX - leftmostPoint);
+          const rightDistance = Math.max(0, rightmostPoint - centerX);
+          const topDistance = Math.max(0, height - highestPoint);
+          const horizontalHalfSpace = width * 0.4;
+          const horizontalScale = Math.min(
+            leftDistance > 0 ? horizontalHalfSpace / leftDistance : 1,
+            rightDistance > 0 ? horizontalHalfSpace / rightDistance : 1,
+          );
+          const verticalScale = topDistance > 0 ? (height - safeTop) / topDistance : 1;
+          const nextTargetScale = Math.max(
+            MIN_DYNAMIC_CAMERA_SCALE,
+            Math.min(1, horizontalScale, verticalScale),
+          );
+          targetScale.current = Math.min(targetScale.current, nextTargetScale);
+        }
+      }
+      currentScale.current += (targetScale.current - currentScale.current) * 0.03;
       if (Math.abs(targetScale.current - currentScale.current) < 0.0001) currentScale.current = targetScale.current;
       const bounds = getBounds(currentScale.current);
       camera.current = bounds;
@@ -578,23 +763,28 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       pendingSleeping.forEach((body) => drawTomatoBody(body));
       for (let index = birdDeliveries.length - 1; index >= 0; index--) {
         const delivery = birdDeliveries[index];
-        const progress = Math.min(1, (now - delivery.startedAt) / delivery.duration);
+        const progress = Math.min(1, (ufoNow - delivery.startedAt) / delivery.duration);
         const routeMargin = 70 / currentScale.current;
         const fromX = delivery.direction === 1 ? bounds.left - routeMargin : bounds.right + routeMargin;
         const toX = delivery.direction === 1 ? bounds.right + routeMargin : bounds.left - routeMargin;
         const x = fromX + (toX - fromX) * progress;
         // Convert the measured toolbar-safe screen position into current world coordinates.
-        const y = bounds.top + flightScreenY / currentScale.current;
+        const y = bounds.top + (height * 0.25) / currentScale.current;
         const birdSize = 24 / currentScale.current;
         if (!delivery.released && progress >= delivery.releaseAt) {
           delivery.released = true;
-          createTomato(
-            delivery.golden,
-            false,
-            { x, y: y + birdSize * 0.62 + delivery.radius },
-            delivery.radius,
-          );
-          if (delivery.golden) goldenDropRef.current();
+          const dropCount = activeBuffsRef.current.doubleDrop ? 2 : 1;
+          for (let dropIndex = 0; dropIndex < dropCount; dropIndex++) {
+            const dropOffset = (dropIndex - (dropCount - 1) / 2) * delivery.radius * 0.8;
+            createTomato(
+              delivery.golden,
+              false,
+              { x: x + dropOffset, y: y + birdSize * 0.62 + delivery.radius },
+              delivery.radius,
+            );
+            if (delivery.golden) goldenDropRef.current();
+            if (dropIndex > 0) bonusTomatoRef.current(delivery.golden);
+          }
         }
         drawBird(
           x,
@@ -604,40 +794,138 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           !delivery.released,
           delivery.golden,
           delivery.radius,
-          now,
+          ufoNow,
         );
         if (progress >= 1) birdDeliveries.splice(index, 1);
       }
       for (let index = balloonEvents.length - 1; index >= 0; index--) {
         const balloon = balloonEvents[index];
-        const progress = Math.min(1, (now - balloon.startedAt) / balloon.duration);
+        const progress = Math.min(1, (ufoNow - balloon.startedAt) / balloon.duration);
         const routeMargin = 100 / currentScale.current;
         const fromX = balloon.direction === 1 ? bounds.left - routeMargin : bounds.right + routeMargin;
         const toX = balloon.direction === 1 ? bounds.right + routeMargin : bounds.left - routeMargin;
         const x = fromX + (toX - fromX) * progress;
         // Extra sky lane below the measured toolbar keeps the entire balloon visible.
-        const balloonScreenY = Math.max(flightScreenY + 108, height * 0.28);
-        const windBob = Math.sin(now * 0.002) * 14;
+        const balloonScreenY = height * 0.15;
+        const windBob = Math.sin(ufoNow * 0.002) * 14;
         const y = bounds.top + (balloonScreenY + windBob) / currentScale.current;
         const balloonSize = 42 / currentScale.current;
 
-        const insideViewport = x >= bounds.left && x <= bounds.right;
-        if (insideViewport && !balloon.enteredViewport) {
+        const dropMargin = (bounds.right - bounds.left) * 0.2;
+        const dropAreaLeft = bounds.left + dropMargin;
+        const dropAreaRight = bounds.right - dropMargin;
+        const insideDropArea = x >= dropAreaLeft && x <= dropAreaRight;
+        if (insideDropArea && !balloon.enteredViewport) {
           balloon.enteredViewport = true;
-          balloon.nextDropAt = now;
+          balloon.nextDropAt = ufoNow;
         }
-        while (insideViewport && now >= balloon.nextDropAt) {
+        while (insideDropArea && ufoNow >= balloon.nextDropAt) {
           const wasInitialDrop = balloon.initialDropPending;
           const spec = createTomatoSpec(wasInitialDrop ? balloon.initialGolden : undefined);
-          createTomato(spec.golden, false, { x, y: y + balloonSize * 1.35 + spec.radius }, spec.radius);
-          if (spec.golden) goldenDropRef.current();
-          if (!wasInitialDrop) bonusTomatoRef.current(spec.golden);
+          const dropX = Math.min(dropAreaRight, Math.max(dropAreaLeft, x));
+          const dropCount = activeBuffsRef.current.doubleDrop ? 2 : 1;
+          for (let dropIndex = 0; dropIndex < dropCount; dropIndex++) {
+            const dropOffset = (dropIndex - (dropCount - 1) / 2) * spec.radius * 0.8;
+            createTomato(
+              spec.golden,
+              false,
+              {
+                x: Math.min(dropAreaRight, Math.max(dropAreaLeft, dropX + dropOffset)),
+                y: y + balloonSize * 1.35 + spec.radius,
+              },
+              spec.radius,
+            );
+            if (spec.golden) goldenDropRef.current();
+            if (!wasInitialDrop || dropIndex > 0) bonusTomatoRef.current(spec.golden);
+          }
           balloon.initialDropPending = false;
           balloon.nextDropAt += 250;
         }
 
         drawBalloon(x, y, balloonSize, balloon.direction);
         if (progress >= 1) balloonEvents.splice(index, 1);
+      }
+
+      if (isFocusRunningRef.current && ufoNow >= nextUfoCheckAt) {
+        nextUfoCheckAt = ufoNow + UFO_CHECK_INTERVAL_MS;
+        const otherAirEventActive = birdDeliveries.length > 0 || balloonEvents.length > 0;
+        if (isUfoUnlockedRef.current
+          && ufoEvents.length === 0
+          && !otherAirEventActive
+          && Math.random() < UFO_APPEARANCE_CHANCE) {
+          const entryDuration = 2200;
+          const startedAt = ufoNow;
+          ufoEvents.push({
+            startedAt,
+            hoverDuration: 20_000 + Math.random() * 40_000,
+            entryDuration,
+            exitDuration: 3000,
+            direction: Math.random() < 0.5 ? 1 : -1,
+            nextDropAt: startedAt + entryDuration + 600,
+          });
+        }
+      }
+
+      for (let index = ufoEvents.length - 1; index >= 0; index--) {
+        const ufo = ufoEvents[index];
+        const elapsed = ufoNow - ufo.startedAt;
+        const hoverStart = ufo.entryDuration;
+        const hoverEnd = hoverStart + ufo.hoverDuration;
+        const eventEnd = hoverEnd + ufo.exitDuration;
+        const routeMargin = 130 / currentScale.current;
+        const enterX = ufo.direction === 1 ? bounds.left - routeMargin : bounds.right + routeMargin;
+        const leaveX = ufo.direction === 1 ? bounds.right + routeMargin : bounds.left - routeMargin;
+        const centerX = (bounds.left + bounds.right) / 2;
+        const hoverRange = (bounds.right - bounds.left) * 0.26;
+        let x: number;
+
+        if (elapsed < hoverStart) {
+          const entryProgress = Math.max(0, elapsed / ufo.entryDuration);
+          const eased = 1 - Math.pow(1 - entryProgress, 3);
+          x = enterX + (centerX - enterX) * eased;
+        } else if (elapsed < hoverEnd) {
+          x = centerX + Math.sin((elapsed - hoverStart) * 0.0008) * hoverRange;
+        } else {
+          const exitStartX = centerX + Math.sin(ufo.hoverDuration * 0.0008) * hoverRange;
+          const exitProgress = Math.min(1, (elapsed - hoverEnd) / ufo.exitDuration);
+          const eased = exitProgress * exitProgress;
+          x = exitStartX + (leaveX - exitStartX) * eased;
+        }
+
+        const ufoScreenY = Math.max(flightScreenY + 72, height * 0.22);
+        const floatY = Math.sin(ufoNow * 0.0015) * 12;
+        const y = bounds.top + (ufoScreenY + floatY) / currentScale.current;
+        const ufoSize = 50 / currentScale.current;
+        const dropMargin = (bounds.right - bounds.left) * 0.2;
+        const dropAreaLeft = bounds.left + dropMargin;
+        const dropAreaRight = bounds.right - dropMargin;
+
+        while (elapsed >= hoverStart && elapsed < hoverEnd && ufoNow >= ufo.nextDropAt) {
+          const goldenChance = activeBuffsRef.current.goldBoost ? CONFIG.goldenChance * 2 : CONFIG.goldenChance;
+          const spec: TomatoSpec = {
+            golden: Math.random() < goldenChance,
+            radius: (20 + Math.random() * 5) * (2.5 + Math.random() * 0.5),
+          };
+          const dropCount = activeBuffsRef.current.doubleDrop ? 2 : 1;
+          for (let dropIndex = 0; dropIndex < dropCount; dropIndex++) {
+            const dropOffset = (dropIndex - (dropCount - 1) / 2) * spec.radius * 0.8;
+            createTomato(
+              spec.golden,
+              false,
+              {
+                x: Math.min(dropAreaRight, Math.max(dropAreaLeft, x + dropOffset)),
+                y: y + ufoSize * 0.65 + spec.radius,
+              },
+              spec.radius,
+            );
+            bonusTomatoRef.current(spec.golden);
+            if (spec.golden) goldenDropRef.current();
+          }
+          ufo.nextDropAt += 1400;
+        }
+
+        drawUfo(x, y, ufoSize);
+        if (elapsed >= eventEnd) ufoEvents.splice(index, 1);
       }
       context.restore();
       frame = requestAnimationFrame(render);
@@ -646,14 +934,14 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     const observer = new ResizeObserver(resize);
     observer.observe(container);
     if (toolbar) observer.observe(toolbar);
-    Runner.run(runner, engine); frame = requestAnimationFrame(render);
+    frame = requestAnimationFrame(render);
     return () => {
       observer.disconnect();
-      cancelAnimationFrame(frame); Runner.stop(runner); Engine.clear(engine);
+      cancelAnimationFrame(frame); Engine.clear(engine);
       addRef.current = () => undefined;
       removeGoldenRef.current = () => 0;
     };
-    // Counts are read only for initial restoration; live counts update targetScale above.
+    // Counts are read only for initial restoration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated]);
 
