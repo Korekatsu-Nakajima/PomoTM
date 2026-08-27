@@ -1,5 +1,5 @@
 export const CONFIG = {
-  durations: { focus: 25 * 60, break: 5 * 60 },
+  durations: { focus: 30 * 60, break: 5 * 60 },
   focusDropDelay: { min: 5_000, max: 10_000 },
   debugDropInterval: 1_000,
   goldenChance: 0.01,

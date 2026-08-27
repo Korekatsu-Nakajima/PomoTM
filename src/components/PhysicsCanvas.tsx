@@ -13,6 +13,8 @@ type Props = {
   hydrated: boolean;
   onBonusTomato: (golden: boolean) => void;
   onGoldenTomatoDrop: () => void;
+  ufoUnlocked: boolean;
+  isBreak: boolean;
 };
 type CameraBounds = { left: number; right: number; top: number; bottom: number };
 type BirdDelivery = {
@@ -34,9 +36,20 @@ type BalloonEvent = {
   enteredViewport: boolean;
   nextDropAt: number;
 };
+type UfoEvent = {
+  startedAt: number;
+  hoverDuration: number;
+  entryDuration: number;
+  exitDuration: number;
+  direction: 1 | -1;
+  nextDropAt: number;
+};
+const OFFSCREEN_CULL_INTERVAL = 30;
+const UFO_CHECK_INTERVAL_MS = 45_000;
+const UFO_APPEARANCE_CHANCE = 0.03;
 
 export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function PhysicsCanvas(
-  { counts, hydrated, onBonusTomato, onGoldenTomatoDrop }, ref,
+  { counts, hydrated, onBonusTomato, onGoldenTomatoDrop, ufoUnlocked, isBreak }, ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -48,6 +61,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
   const camera = useRef<CameraBounds>({ left: 0, right: 1, top: 0, bottom: 1 });
   const bonusTomatoRef = useRef(onBonusTomato);
   const goldenDropRef = useRef(onGoldenTomatoDrop);
+  const ufoUnlockedRef = useRef(ufoUnlocked);
+  const breakRef = useRef(isBreak);
 
   useImperativeHandle(ref, () => ({
     drop: (golden) => addRef.current(golden),
@@ -55,6 +70,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
   }), []);
   useEffect(() => { bonusTomatoRef.current = onBonusTomato; }, [onBonusTomato]);
   useEffect(() => { goldenDropRef.current = onGoldenTomatoDrop; }, [onGoldenTomatoDrop]);
+  useEffect(() => { ufoUnlockedRef.current = ufoUnlocked; }, [ufoUnlocked]);
+  useEffect(() => { breakRef.current = isBreak; }, [isBreak]);
 
   useEffect(() => {
     const total = counts.normal + counts.gold;
@@ -74,34 +91,34 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       velocityIterations: 10,
       gravity: { x: 0, y: 1.05 },
     });
+    Composite.clear(engine.world, false, true);
+    Engine.clear(engine);
     const runner = Runner.create();
     const context = canvas.getContext("2d");
     if (!context) return;
 
     let width = 1, height = 1, frame = 0;
+    let disposed = false;
+    const initialCountOffset = totalCount.current;
+    let pixelRatio = 1;
     let flightScreenY = 150;
     let settledPileTop = Number.POSITIVE_INFINITY;
     let leftWall: Matter.Body, rightWall: Matter.Body, floor: Matter.Body;
     let wallHeight = 1, floorWidth = 1;
     const activeBodies = new Set<Matter.Body>();
     const sleepingBodies = new Set<Matter.Body>();
-    const pendingSleeping = new Set<Matter.Body>();
+    const tomatoBodies: Matter.Body[] = [];
     const birdDeliveries: BirdDelivery[] = [];
     const balloonEvents: BalloonEvent[] = [];
-    let cachedSleeping = new Set<Matter.Body>();
-    let sleepingCacheDirty = true;
-    let forceCacheRefresh = false;
-    let lastCacheRefresh = 0;
-    let cacheScale = 1;
-    const sleepingCanvas = document.createElement("canvas");
-    const sleepingContext = sleepingCanvas.getContext("2d");
-    const backgroundCanvas = document.createElement("canvas");
-    const backgroundContext = backgroundCanvas.getContext("2d");
-    const backgroundWorld = { left: 0, top: 0, width: 1, height: 1 };
+    const ufoEvents: UfoEvent[] = [];
+    let eventTime = performance.now();
+    let previousFrameTime = eventTime;
+    let nextUfoCheckAt = eventTime + UFO_CHECK_INTERVAL_MS;
+    let renderFrameCount = 0;
     let imageReady = false;
     const image = new Image();
     if (CONFIG.tomatoImageUrl) {
-      image.onload = () => { imageReady = true; };
+      image.onload = () => { if (!disposed) imageReady = true; };
       image.src = CONFIG.tomatoImageUrl;
     }
 
@@ -117,6 +134,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     };
 
     const syncBoundaries = (bounds: CameraBounds) => {
+      if (disposed || !leftWall || !rightWall || !floor) return;
       const nextWallHeight = bounds.bottom - bounds.top + 80;
       const nextFloorWidth = bounds.right - bounds.left + 80;
       if (Math.abs(nextWallHeight - wallHeight) > 0.01) {
@@ -151,8 +169,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     };
 
     const resize = () => {
+      if (disposed || !canvasRef.current || !containerRef.current) return;
       const rect = container.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      pixelRatio = dpr;
       width = Math.max(1, rect.width); height = Math.max(1, rect.height);
       if (toolbar) {
         const toolbarRect = toolbar.getBoundingClientRect();
@@ -160,12 +180,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       }
       canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr);
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      sleepingCanvas.width = canvas.width; sleepingCanvas.height = canvas.height;
-      sleepingContext?.setTransform(dpr, 0, 0, dpr, 0, 0);
-      sleepingCacheDirty = true;
-      forceCacheRefresh = true;
       if (leftWall) syncBoundaries(getBounds(currentScale.current));
-      buildBackgroundCanvas();
     };
 
     const createTomato = (
@@ -188,7 +203,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         density: 0.005,
         slop: 0.05,
         sleepThreshold: 30,
-        label: "tomato", plugin: { tomato: { golden, radius } },
+        label: "tomato", plugin: { tomato: { golden, radius, createdAt: eventTime } },
       });
       Body.setAngularVelocity(body, (Math.random() - 0.5) * 0.12);
       Composite.add(engine.world, body);
@@ -196,23 +211,19 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       Matter.Events.on(body, "sleepStart", () => {
         activeBodies.delete(body);
         sleepingBodies.add(body);
-        pendingSleeping.add(body);
         settledPileTop = Math.min(settledPileTop, body.bounds.min.y);
-        sleepingCacheDirty = true;
       });
       Matter.Events.on(body, "sleepEnd", () => {
         sleepingBodies.delete(body);
-        pendingSleeping.delete(body);
         activeBodies.add(body);
-        if (cachedSleeping.has(body)) forceCacheRefresh = true;
-        sleepingCacheDirty = true;
       });
+      tomatoBodies.push(body);
     };
     const createRadius = () => {
       const baseRadius = 20 + Math.random() * 5;
       const sizeRoll = Math.random();
-      if (sizeRoll < 0.01) return baseRadius * (0.3 + Math.random() * 0.1);
-      if (sizeRoll < 0.02) return baseRadius * (2.5 + Math.random() * 0.5);
+      if (sizeRoll < 0.003) return baseRadius * (0.3 + Math.random() * 0.1);
+      if (sizeRoll < 0.006) return baseRadius * (2.5 + Math.random() * 0.5);
       return baseRadius;
     };
 
@@ -222,8 +233,9 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     });
 
     const queueBirdDelivery = (golden = false) => {
-      if (Math.random() < 0.01) {
-        const startedAt = performance.now();
+      if (breakRef.current) return;
+      if (Math.random() < 0.003) {
+        const startedAt = eventTime;
         balloonEvents.push({
           startedAt,
           duration: 13_000 + Math.random() * 2_000,
@@ -236,7 +248,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         return;
       }
       birdDeliveries.push({
-        startedAt: performance.now(),
+        startedAt: eventTime,
         duration: 2200 + Math.random() * 600,
         releaseAt: 0.38 + Math.random() * 0.24,
         direction: Math.random() < 0.5 ? 1 : -1,
@@ -247,6 +259,22 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     };
     addRef.current = queueBirdDelivery;
 
+    const removeTomatoBody = (body: Matter.Body) => {
+      if (disposed || !tomatoBodies.includes(body)) return false;
+      try {
+        Composite.remove(engine.world, body);
+        Matter.Events.off(body, "sleepStart");
+        Matter.Events.off(body, "sleepEnd");
+      } catch {
+        return false;
+      }
+      activeBodies.delete(body);
+      sleepingBodies.delete(body);
+      const bodyIndex = tomatoBodies.indexOf(body);
+      if (bodyIndex >= 0) tomatoBodies.splice(bodyIndex, 1);
+      return true;
+    };
+
     const removeGoldenTomatoes = (count: number) => {
       const requested = Math.max(0, Math.floor(count));
       if (!requested) return 0;
@@ -255,19 +283,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         .sort((first, second) => first.bounds.min.y - second.bounds.min.y)
         .slice(0, requested);
 
-      let removedCachedBody = false;
       for (const body of goldenBodies) {
-        Composite.remove(engine.world, body);
-        Matter.Events.off(body, "sleepStart");
-        Matter.Events.off(body, "sleepEnd");
-        activeBodies.delete(body);
-        sleepingBodies.delete(body);
-        pendingSleeping.delete(body);
-        if (cachedSleeping.delete(body)) removedCachedBody = true;
-      }
-      if (removedCachedBody) {
-        sleepingCacheDirty = true;
-        forceCacheRefresh = true;
+        removeTomatoBody(body);
       }
       settledPileTop = sleepingBodies.size
         ? Math.min(...[...sleepingBodies].map((body) => body.bounds.min.y))
@@ -298,8 +315,6 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         target.lineWidth = Math.max(1, radius * 0.07);
         target.strokeStyle = golden ? "#b27b16" : "#b52f2d";
         target.stroke();
-
-        // Five-leaf calyx, always anchored to the same local rotation.
         target.beginPath();
         for (let leaf = 0; leaf < 5; leaf++) {
           const angle = -Math.PI / 2 + leaf * Math.PI * 0.4;
@@ -319,6 +334,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       const { golden, radius } = body.plugin.tomato as { golden: boolean; radius: number };
       drawTomato(target, body.position.x, body.position.y, radius, golden, body.angle);
     };
+
 
     const drawBird = (
       x: number,
@@ -395,144 +411,46 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       context.restore();
     };
 
-    function buildBackgroundCanvas() {
-      if (!backgroundContext) return;
-      const ppm = CONFIG.world.pixelsPerMeter;
-      backgroundCanvas.width = 2048;
-      backgroundCanvas.height = 4096;
-      backgroundWorld.width = CONFIG.world.backgroundWidthMeters * ppm;
-      backgroundWorld.height = CONFIG.world.backgroundHeightMeters * ppm;
-      backgroundWorld.left = width / 2 - backgroundWorld.width / 2;
-      backgroundWorld.top = height - backgroundWorld.height;
-      const sx = backgroundCanvas.width / backgroundWorld.width;
-      const sy = backgroundCanvas.height / backgroundWorld.height;
-      backgroundContext.setTransform(sx, 0, 0, sy, -backgroundWorld.left * sx, -backgroundWorld.top * sy);
-      backgroundContext.clearRect(backgroundWorld.left, backgroundWorld.top, backgroundWorld.width, backgroundWorld.height);
-      backgroundContext.strokeStyle = "rgba(255, 255, 255, 0.12)";
-      backgroundContext.lineCap = "round";
-      backgroundContext.lineJoin = "round";
-      const ground = height;
-      const center = width / 2;
-
-      // Person + harvest basket: minimal Lucide-like line icons.
-      const personX = center - 650;
-      backgroundContext.lineWidth = 18;
-      backgroundContext.beginPath();
-      backgroundContext.arc(personX, ground - 775, 75, 0, Math.PI * 2);
-      backgroundContext.moveTo(personX, ground - 700); backgroundContext.lineTo(personX, ground - 300);
-      backgroundContext.moveTo(personX, ground - 590); backgroundContext.lineTo(personX - 145, ground - 430);
-      backgroundContext.moveTo(personX, ground - 590); backgroundContext.lineTo(personX + 145, ground - 430);
-      backgroundContext.moveTo(personX, ground - 300); backgroundContext.lineTo(personX - 120, ground);
-      backgroundContext.moveTo(personX, ground - 300); backgroundContext.lineTo(personX + 120, ground);
-      backgroundContext.stroke();
-      backgroundContext.beginPath();
-      backgroundContext.roundRect(center - 350, ground - 225, 360, 225, 28);
-      backgroundContext.moveTo(center - 300, ground - 225);
-      backgroundContext.quadraticCurveTo(center - 170, ground - 410, center - 40, ground - 225);
-      backgroundContext.stroke();
-
-      // Kei truck: one clean body outline and two wheel circles.
-      const truckX = center + 1700;
-      backgroundContext.lineWidth = 34;
-      backgroundContext.beginPath();
-      backgroundContext.moveTo(truckX - 850, ground - 210);
-      backgroundContext.lineTo(truckX - 850, ground - 820);
-      backgroundContext.lineTo(truckX + 200, ground - 820);
-      backgroundContext.lineTo(truckX + 330, ground - 1000);
-      backgroundContext.lineTo(truckX + 850, ground - 1000);
-      backgroundContext.lineTo(truckX + 850, ground - 210);
-      backgroundContext.closePath();
-      backgroundContext.moveTo(truckX + 260, ground - 820); backgroundContext.lineTo(truckX + 850, ground - 820);
-      backgroundContext.moveTo(truckX + 540, ground - 1000); backgroundContext.lineTo(truckX + 540, ground - 820);
-      backgroundContext.stroke();
-      backgroundContext.beginPath();
-      backgroundContext.arc(truckX - 500, ground - 180, 165, 0, Math.PI * 2);
-      backgroundContext.arc(truckX + 520, ground - 180, 165, 0, Math.PI * 2);
-      backgroundContext.stroke();
-
-      // Large container: rounded frame with only a few structural lines.
-      const containerX = center + 7200;
-      backgroundContext.lineWidth = 54;
-      backgroundContext.beginPath();
-      backgroundContext.roundRect(containerX - 3050, ground - 1300, 6100, 1300, 80);
-      for (let x = containerX - 2000; x <= containerX + 2000; x += 1000) {
-        backgroundContext.moveTo(x, ground - 1200); backgroundContext.lineTo(x, ground - 100);
+    const drawUfo = (x: number, y: number, size: number) => {
+      context.save();
+      context.translate(x, y);
+      context.fillStyle = "rgba(255, 255, 255, 0.25)";
+      context.beginPath();
+      context.ellipse(0, -size * 0.25, size * 0.48, size * 0.38, 0, Math.PI, Math.PI * 2);
+      context.fill();
+      context.beginPath();
+      context.moveTo(-size, 0);
+      context.lineTo(-size * 0.58, -size * 0.28);
+      context.lineTo(size * 0.58, -size * 0.28);
+      context.lineTo(size, 0);
+      context.lineTo(size * 0.55, size * 0.3);
+      context.lineTo(-size * 0.55, size * 0.3);
+      context.closePath();
+      context.fill();
+      context.fillStyle = "rgba(239, 83, 80, 0.65)";
+      for (const lightX of [-0.55, 0, 0.55]) {
+        context.fillRect(lightX * size - size * 0.08, size * 0.02, size * 0.16, size * 0.12);
       }
-      backgroundContext.stroke();
-
-      // Helicopter: capsule cabin, tail, rotor and skids.
-      const heliX = center - 7000;
-      backgroundContext.lineWidth = 64;
-      backgroundContext.beginPath();
-      backgroundContext.ellipse(heliX, ground - 950, 1900, 620, 0, 0, Math.PI * 2);
-      backgroundContext.moveTo(heliX + 1750, ground - 950); backgroundContext.lineTo(heliX + 3000, ground - 1380);
-      backgroundContext.lineTo(heliX + 3100, ground - 680);
-      backgroundContext.moveTo(heliX, ground - 1570); backgroundContext.lineTo(heliX, ground - 1770);
-      backgroundContext.moveTo(heliX - 2900, ground - 1770); backgroundContext.lineTo(heliX + 2900, ground - 1770);
-      backgroundContext.moveTo(heliX - 800, ground - 330); backgroundContext.lineTo(heliX - 1150, ground);
-      backgroundContext.moveTo(heliX + 800, ground - 330); backgroundContext.lineTo(heliX + 1150, ground);
-      backgroundContext.moveTo(heliX - 1300, ground); backgroundContext.lineTo(heliX + 1300, ground);
-      backgroundContext.stroke();
-
-      // Statue of Liberty: pedestal, robe, head and torch as a sparse outline.
-      const statueX = center + 20_000;
-      backgroundContext.lineWidth = 260;
-      backgroundContext.beginPath();
-      backgroundContext.roundRect(statueX - 3000, ground - 14_000, 6000, 14_000, 300);
-      backgroundContext.moveTo(statueX - 1800, ground - 14_000);
-      backgroundContext.lineTo(statueX - 1100, ground - 36_500);
-      backgroundContext.lineTo(statueX + 1400, ground - 36_500);
-      backgroundContext.lineTo(statueX + 2200, ground - 14_000);
-      backgroundContext.moveTo(statueX, ground - 36_500);
-      backgroundContext.lineTo(statueX + 2800, ground - 44_500);
-      backgroundContext.lineTo(statueX + 2800, ground - 46_500);
-      backgroundContext.stroke();
-      backgroundContext.beginPath();
-      backgroundContext.arc(statueX, ground - 38_500, 1350, 0, Math.PI * 2);
-      backgroundContext.stroke();
-      backgroundContext.beginPath();
-      for (let ray = 0; ray < 7; ray++) {
-        const angle = -Math.PI + ray * Math.PI / 6;
-        backgroundContext.moveTo(statueX + Math.cos(angle) * 1500, ground - 38_500 + Math.sin(angle) * 1500);
-        backgroundContext.lineTo(statueX + Math.cos(angle) * 2300, ground - 38_500 + Math.sin(angle) * 2300);
-      }
-      backgroundContext.stroke();
-    }
-
-    const rebuildSleepingCache = (now: number) => {
-      if (!sleepingContext) return;
-      const dpr = window.devicePixelRatio || 1;
-      sleepingContext.setTransform(1, 0, 0, 1, 0, 0);
-      sleepingContext.clearRect(0, 0, sleepingCanvas.width, sleepingCanvas.height);
-      sleepingContext.setTransform(dpr, 0, 0, dpr, 0, 0);
-      cacheScale = currentScale.current;
-      sleepingContext.save();
-      sleepingContext.translate(width / 2, height);
-      sleepingContext.scale(cacheScale, cacheScale);
-      sleepingContext.translate(-width / 2, -height);
-      sleepingBodies.forEach((body) => drawTomatoBody(body, sleepingContext));
-      sleepingContext.restore();
-      cachedSleeping = new Set(sleepingBodies);
-      pendingSleeping.clear();
-      sleepingCacheDirty = false;
-      forceCacheRefresh = false;
-      lastCacheRefresh = now;
+      context.restore();
     };
 
     resize(); createBoundaries();
-    const total = counts.normal + counts.gold;
-    const visible = Math.min(total, CONFIG.maxRestoredBodies);
-    const goldVisible = total ? Math.min(counts.gold, Math.round(visible * counts.gold / total)) : 0;
-    for (let i = 0; i < visible; i++) createTomato(i < goldVisible, true);
 
     const render = (now: number) => {
+      const frameDelta = Math.min(100, Math.max(0, now - previousFrameTime));
+      previousFrameTime = now;
+      if (!breakRef.current) eventTime += frameDelta;
+      const eventNow = eventTime;
+      engine.timing.timeScale = breakRef.current ? 0 : 1;
       const tomatoDiameter = CONFIG.world.tomatoDiameterMeters * CONFIG.world.pixelsPerMeter;
-      const estimatedPileHeight = tomatoDiameter * Math.sqrt(totalCount.current * CONFIG.world.pilePackingFactor);
+      const sessionTomatoCount = Math.max(0, totalCount.current - initialCountOffset);
+      const estimatedPileHeight = tomatoDiameter * Math.sqrt(sessionTomatoCount * CONFIG.world.pilePackingFactor);
       const measuredPileHeight = Number.isFinite(settledPileTop) ? Math.max(0, height - settledPileTop) : 0;
+      const overheadClearance = Math.max(160, height * 0.2);
       const requiredWorldHeight = Math.max(
         height,
-        estimatedPileHeight * CONFIG.world.cameraPadding,
-        measuredPileHeight * CONFIG.world.cameraPadding,
+        estimatedPileHeight * CONFIG.world.cameraPadding + overheadClearance,
+        measuredPileHeight * CONFIG.world.cameraPadding + overheadClearance,
       );
       // 下限を設けない。山が高くなるほど0へ向かって後退し続ける。
       targetScale.current = Math.min(
@@ -544,41 +462,31 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       const bounds = getBounds(currentScale.current);
       camera.current = bounds;
       syncBoundaries(bounds);
-      if (sleepingCacheDirty && (forceCacheRefresh || now - lastCacheRefresh >= 500)) {
-        rebuildSleepingCache(now);
+      renderFrameCount += 1;
+      if (renderFrameCount % OFFSCREEN_CULL_INTERVAL === 0 && tomatoBodies.length) {
+        const visibleWidth = bounds.right - bounds.left;
+        const visibleHeight = bounds.bottom - bounds.top;
+        const escapedBodies = tomatoBodies.filter((body) =>
+          body.bounds.min.y > bounds.bottom + visibleHeight
+          || body.bounds.max.x < bounds.left - visibleWidth
+          || body.bounds.min.x > bounds.right + visibleWidth,
+        );
+        escapedBodies.forEach(removeTomatoBody);
       }
-      context.clearRect(0, 0, width, height); context.save();
-      context.translate(width / 2, height);
-      context.scale(currentScale.current, currentScale.current);
-      context.translate(-width / 2, -height);
-      context.drawImage(
-        backgroundCanvas,
-        backgroundWorld.left,
-        backgroundWorld.top,
-        backgroundWorld.width,
-        backgroundWorld.height,
-      );
-      context.restore();
-
-      if (cachedSleeping.size && sleepingCanvas.width) {
-        const ratio = currentScale.current / cacheScale;
-        context.save();
-        context.translate(width / 2, height);
-        context.scale(ratio, ratio);
-        context.translate(-width / 2, -height);
-        context.drawImage(sleepingCanvas, 0, 0, width, height);
-        context.restore();
+      context.clearRect(0, 0, width, height);
+      if (breakRef.current) {
+        context.fillStyle = "#fafafa";
+        context.fillRect(0, 0, width, height);
       }
 
       context.save();
       context.translate(width / 2, height);
       context.scale(currentScale.current, currentScale.current);
       context.translate(-width / 2, -height);
-      activeBodies.forEach((body) => drawTomatoBody(body));
-      pendingSleeping.forEach((body) => drawTomatoBody(body));
+      tomatoBodies.forEach((body) => drawTomatoBody(body));
       for (let index = birdDeliveries.length - 1; index >= 0; index--) {
         const delivery = birdDeliveries[index];
-        const progress = Math.min(1, (now - delivery.startedAt) / delivery.duration);
+        const progress = Math.min(1, (eventNow - delivery.startedAt) / delivery.duration);
         const routeMargin = 70 / currentScale.current;
         const fromX = delivery.direction === 1 ? bounds.left - routeMargin : bounds.right + routeMargin;
         const toX = delivery.direction === 1 ? bounds.right + routeMargin : bounds.left - routeMargin;
@@ -586,7 +494,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         // Convert the measured toolbar-safe screen position into current world coordinates.
         const y = bounds.top + flightScreenY / currentScale.current;
         const birdSize = 24 / currentScale.current;
-        if (!delivery.released && progress >= delivery.releaseAt) {
+        if (!breakRef.current && !delivery.released && progress >= delivery.releaseAt) {
           delivery.released = true;
           createTomato(
             delivery.golden,
@@ -604,51 +512,135 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           !delivery.released,
           delivery.golden,
           delivery.radius,
-          now,
+          eventNow,
         );
         if (progress >= 1) birdDeliveries.splice(index, 1);
       }
       for (let index = balloonEvents.length - 1; index >= 0; index--) {
         const balloon = balloonEvents[index];
-        const progress = Math.min(1, (now - balloon.startedAt) / balloon.duration);
+        const progress = Math.min(1, (eventNow - balloon.startedAt) / balloon.duration);
         const routeMargin = 100 / currentScale.current;
         const fromX = balloon.direction === 1 ? bounds.left - routeMargin : bounds.right + routeMargin;
         const toX = balloon.direction === 1 ? bounds.right + routeMargin : bounds.left - routeMargin;
         const x = fromX + (toX - fromX) * progress;
-        // Extra sky lane below the measured toolbar keeps the entire balloon visible.
-        const balloonScreenY = Math.max(flightScreenY + 108, height * 0.28);
-        const windBob = Math.sin(now * 0.002) * 14;
+        // Keep the balloon in a toolbar-safe lane close to the top of the viewport.
+        const balloonScreenY = Math.max(flightScreenY + 48, height * 0.14);
+        const windBob = Math.sin(eventNow * 0.002) * 14;
         const y = bounds.top + (balloonScreenY + windBob) / currentScale.current;
         const balloonSize = 42 / currentScale.current;
 
         const insideViewport = x >= bounds.left && x <= bounds.right;
         if (insideViewport && !balloon.enteredViewport) {
           balloon.enteredViewport = true;
-          balloon.nextDropAt = now;
+          balloon.nextDropAt = eventNow;
         }
-        while (insideViewport && now >= balloon.nextDropAt) {
+        while (!breakRef.current && insideViewport && eventNow >= balloon.nextDropAt) {
           const wasInitialDrop = balloon.initialDropPending;
           const spec = createTomatoSpec(wasInitialDrop ? balloon.initialGolden : undefined);
           createTomato(spec.golden, false, { x, y: y + balloonSize * 1.35 + spec.radius }, spec.radius);
           if (spec.golden) goldenDropRef.current();
           if (!wasInitialDrop) bonusTomatoRef.current(spec.golden);
           balloon.initialDropPending = false;
-          balloon.nextDropAt += 250;
+          balloon.nextDropAt += 750;
         }
 
         drawBalloon(x, y, balloonSize, balloon.direction);
         if (progress >= 1) balloonEvents.splice(index, 1);
       }
+
+      if (!breakRef.current && eventNow >= nextUfoCheckAt) {
+        nextUfoCheckAt = eventNow + UFO_CHECK_INTERVAL_MS;
+        const otherAirEventActive = birdDeliveries.length > 0 || balloonEvents.length > 0;
+        if (ufoUnlockedRef.current && ufoEvents.length === 0 && !otherAirEventActive && Math.random() < UFO_APPEARANCE_CHANCE) {
+          const entryDuration = 2200;
+          const startedAt = eventNow;
+          ufoEvents.push({
+            startedAt,
+            hoverDuration: 20_000 + Math.random() * 40_000,
+            entryDuration,
+            exitDuration: 3000,
+            direction: Math.random() < 0.5 ? 1 : -1,
+            nextDropAt: startedAt + entryDuration + 600,
+          });
+        }
+      }
+
+      for (let index = ufoEvents.length - 1; index >= 0; index--) {
+        const ufo = ufoEvents[index];
+        const elapsed = eventNow - ufo.startedAt;
+        const hoverStart = ufo.entryDuration;
+        const hoverEnd = hoverStart + ufo.hoverDuration;
+        const eventEnd = hoverEnd + ufo.exitDuration;
+        const routeMargin = 130 / currentScale.current;
+        const enterX = ufo.direction === 1 ? bounds.left - routeMargin : bounds.right + routeMargin;
+        const leaveX = ufo.direction === 1 ? bounds.right + routeMargin : bounds.left - routeMargin;
+        const centerX = (bounds.left + bounds.right) / 2;
+        const hoverRange = (bounds.right - bounds.left) * 0.26;
+        let x: number;
+
+        if (elapsed < hoverStart) {
+          const entryProgress = Math.max(0, elapsed / ufo.entryDuration);
+          const eased = 1 - Math.pow(1 - entryProgress, 3);
+          x = enterX + (centerX - enterX) * eased;
+        } else if (elapsed < hoverEnd) {
+          x = centerX + Math.sin((elapsed - hoverStart) * 0.0008) * hoverRange;
+        } else {
+          const exitStartX = centerX + Math.sin(ufo.hoverDuration * 0.0008) * hoverRange;
+          const exitProgress = Math.min(1, (elapsed - hoverEnd) / ufo.exitDuration);
+          const eased = exitProgress * exitProgress;
+          x = exitStartX + (leaveX - exitStartX) * eased;
+        }
+
+        const ufoScreenY = Math.max(flightScreenY + 72, height * 0.22);
+        const floatY = Math.sin(eventNow * 0.0015) * 12;
+        const y = bounds.top + (ufoScreenY + floatY) / currentScale.current;
+        const ufoSize = 50 / currentScale.current;
+
+        while (!breakRef.current && elapsed >= hoverStart && elapsed < hoverEnd && eventNow >= ufo.nextDropAt) {
+          const spec: TomatoSpec = {
+            golden: Math.random() < CONFIG.goldenChance,
+            radius: (20 + Math.random() * 5) * (2.5 + Math.random() * 0.5),
+          };
+          createTomato(spec.golden, false, { x, y: y + ufoSize * 0.65 + spec.radius }, spec.radius);
+          bonusTomatoRef.current(spec.golden);
+          if (spec.golden) goldenDropRef.current();
+          ufo.nextDropAt += 1400;
+        }
+
+        drawUfo(x, y, ufoSize);
+        if (elapsed >= eventEnd) ufoEvents.splice(index, 1);
+      }
       context.restore();
-      frame = requestAnimationFrame(render);
+      if (!disposed) frame = requestAnimationFrame(safeRender);
+    };
+
+    const safeRender = (now: number) => {
+      if (disposed || !canvasRef.current || !containerRef.current) return;
+      try {
+        render(now);
+      } catch {
+        try {
+          context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        } catch {
+          return;
+        }
+        if (!disposed) frame = requestAnimationFrame(safeRender);
+      }
     };
 
     const observer = new ResizeObserver(resize);
     observer.observe(container);
     if (toolbar) observer.observe(toolbar);
-    Runner.run(runner, engine); frame = requestAnimationFrame(render);
+    window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
+    Runner.run(runner, engine); frame = requestAnimationFrame(safeRender);
     return () => {
+      disposed = true;
+      image.onload = null;
+      image.onerror = null;
       observer.disconnect();
+      window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
       cancelAnimationFrame(frame); Runner.stop(runner); Engine.clear(engine);
       addRef.current = () => undefined;
       removeGoldenRef.current = () => 0;
@@ -657,5 +649,5 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated]);
 
-  return <div ref={containerRef} className="pointer-events-none absolute inset-0 z-10"><canvas ref={canvasRef} className="h-full w-full" /></div>;
+  return <div ref={containerRef} className="absolute inset-0 z-0 h-full w-full overflow-hidden"><canvas ref={canvasRef} className="block h-full w-full touch-none" /></div>;
 });
