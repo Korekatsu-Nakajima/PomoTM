@@ -10,14 +10,17 @@ const button = "inline-flex items-center justify-center gap-1.5 rounded-full px-
 const quiet = `${button} bg-zinc-800 text-zinc-100 ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700`;
 const PROGRESS_STORAGE_KEY = "tomato-focus:progress:v1";
 const UNLOCKED_ITEMS_STORAGE_KEY = "pomo_unlocked_items";
+const MAX_ALTITUDE_STORAGE_KEY = "pomo_max_altitude";
+const TOTAL_GOLD_TOMATOES_STORAGE_KEY = "pomo_total_gold_tomatoes";
+const UNLOCKED_EVENTS_STORAGE_KEY = "pomo_unlocked_events";
 const MAX_SAFE_SAVED_TOMATOES = 50_000;
 type BuffKey = "doubleDrop" | "balloonBoost" | "goldBoost";
 type ActiveBuffs = Record<BuffKey, boolean>;
 const INITIAL_BUFFS: ActiveBuffs = { doubleDrop: false, balloonBoost: false, goldBoost: false };
 type BuffRemaining = Record<BuffKey, number>;
 const BUFF_DURATION_SECONDS = 30 * 60;
-const SUPPLY_GOLDEN_CHANCE = 0.10;
-const BONUS_BREAK_GOLDEN_CHANCE = 0.20;
+const SUPPLY_GOLDEN_CHANCE = 0.01;
+const BONUS_BREAK_GOLDEN_CHANCE = 0.10;
 const INITIAL_BUFF_REMAINING: BuffRemaining = { doubleDrop: 0, balloonBoost: 0, goldBoost: 0 };
 type UnlockedItems = { ufo: boolean; bird: boolean; balloon: boolean };
 const INITIAL_UNLOCKED_ITEMS: UnlockedItems = { ufo: false, bird: false, balloon: false };
@@ -63,6 +66,8 @@ export default function Home() {
   const [shopOpen, setShopOpen] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [altitude, setAltitude] = useState(0);
+  const [maxAltitude, setMaxAltitude] = useState(0);
+  const [totalGoldTomatoes, setTotalGoldTomatoes] = useState(0);
   const [debugUfoMode, setDebugUfoMode] = useState(false);
   const [rewardOpen, setRewardOpen] = useState(false);
   const [rewardWatching, setRewardWatching] = useState(false);
@@ -123,6 +128,25 @@ export default function Home() {
       } catch {
         localStorage.removeItem(UNLOCKED_ITEMS_STORAGE_KEY);
       }
+      const storedMaxAltitude = Number(localStorage.getItem(MAX_ALTITUDE_STORAGE_KEY));
+      setMaxAltitude(Number.isFinite(storedMaxAltitude) && storedMaxAltitude >= 0 ? storedMaxAltitude : 0);
+      const storedTotalGoldTomatoes = Number(localStorage.getItem(TOTAL_GOLD_TOMATOES_STORAGE_KEY));
+      setTotalGoldTomatoes(Number.isSafeInteger(storedTotalGoldTomatoes) && storedTotalGoldTomatoes >= 0
+        ? storedTotalGoldTomatoes
+        : 0);
+      try {
+        const storedUnlockedEvents = JSON.parse(localStorage.getItem(UNLOCKED_EVENTS_STORAGE_KEY) ?? "null");
+        if (storedUnlockedEvents && typeof storedUnlockedEvents === "object") {
+          setUnlockedItems((current) => ({
+            ...current,
+            ufo: storedUnlockedEvents.ufo === true || current.ufo,
+            bird: storedUnlockedEvents.bird === true || current.bird,
+            balloon: storedUnlockedEvents.balloon === true || current.balloon,
+          }));
+        }
+      } catch {
+        localStorage.removeItem(UNLOCKED_EVENTS_STORAGE_KEY);
+      }
     } catch {
       setGoldenTomatoes(0);
       setActiveBuffs(INITIAL_BUFFS);
@@ -140,10 +164,23 @@ export default function Home() {
     if (!hydrated) return;
     saveLocalStorage(UNLOCKED_ITEMS_STORAGE_KEY, { ufo: unlockedItems.ufo });
   }, [hydrated, unlockedItems.ufo]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveLocalStorage(MAX_ALTITUDE_STORAGE_KEY, maxAltitude);
+  }, [hydrated, maxAltitude]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveLocalStorage(TOTAL_GOLD_TOMATOES_STORAGE_KEY, totalGoldTomatoes);
+  }, [hydrated, totalGoldTomatoes]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveLocalStorage(UNLOCKED_EVENTS_STORAGE_KEY, unlockedItems);
+  }, [hydrated, unlockedItems]);
   const awardTomato = useCallback(() => {
     if (document.hidden) return;
     if (debugUfoMode) return;
-    const goldenChance = activeBuffs.goldBoost ? SUPPLY_GOLDEN_CHANCE * 2 : SUPPLY_GOLDEN_CHANCE;
+    const baseGoldenChance = isBonusBreakMode ? BONUS_BREAK_GOLDEN_CHANCE : SUPPLY_GOLDEN_CHANCE;
+    const goldenChance = activeBuffs.goldBoost ? baseGoldenChance * 2 : baseGoldenChance;
     const golden = Math.random() < goldenChance;
     setCounts((current) => {
       const key = golden ? "gold" : "normal";
@@ -152,7 +189,7 @@ export default function Home() {
       return next;
     });
     physics.current?.drop(golden);
-  }, [activeBuffs.goldBoost, debugUfoMode]);
+  }, [activeBuffs.goldBoost, debugUfoMode, isBonusBreakMode]);
   const recordBonusTomato = useCallback((golden: boolean) => {
     setCounts((current) => {
       const key = golden ? "gold" : "normal";
@@ -163,9 +200,11 @@ export default function Home() {
   }, []);
   const recordGoldenTomatoDrop = useCallback(() => {
     setGoldenTomatoes((current) => current + 1);
+    setTotalGoldTomatoes((current) => current + 1);
   }, []);
   const recordAltitude = useCallback((nextAltitude: number) => {
     setAltitude(nextAltitude);
+    setMaxAltitude((current) => Math.max(current, nextAltitude));
   }, []);
   const activateBuff = (key: BuffKey, cost: number) => {
     if (activeBuffs[key] || goldenTomatoes < cost) return;
@@ -206,6 +245,25 @@ export default function Home() {
     setRewardOpen(true);
   }, [clearBonusBreakState]);
   const timer = useTimer(awardTomato, handleSessionComplete);
+  const pauseTomatoCycle = useCallback(() => {
+    timer.pause();
+  }, [timer.pause]);
+  const resumeTomatoCycle = useCallback(() => {
+    timer.start();
+  }, [timer.start]);
+  useEffect(() => {
+    const handleSpaceToggle = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || event.repeat || rewardOpen || rewardWatching) return;
+      const target = event.target;
+      if (target instanceof HTMLElement
+        && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName))) return;
+      event.preventDefault();
+      if (timer.running) pauseTomatoCycle();
+      else resumeTomatoCycle();
+    };
+    window.addEventListener("keydown", handleSpaceToggle);
+    return () => window.removeEventListener("keydown", handleSpaceToggle);
+  }, [pauseTomatoCycle, resumeTomatoCycle, rewardOpen, rewardWatching, timer.running]);
   const selectTimerMode = (mode: TimerMode) => {
     clearBonusBreakState();
     timer.selectMode(mode);
@@ -243,7 +301,10 @@ export default function Home() {
     if (!isBonusBreakMode || timer.mode !== "break" || !timer.running) return;
     const bonusSupplyTimer = window.setInterval(() => {
       if (document.hidden) return;
-      const golden = Math.random() < BONUS_BREAK_GOLDEN_CHANCE;
+      const goldenChance = activeBuffs.goldBoost
+        ? BONUS_BREAK_GOLDEN_CHANCE * 2
+        : BONUS_BREAK_GOLDEN_CHANCE;
+      const golden = Math.random() < goldenChance;
       setCounts((current) => {
         const key = golden ? "gold" : "normal";
         const next = { ...current, [key]: current[key] + 1 };
@@ -253,7 +314,7 @@ export default function Home() {
       physics.current?.drop(golden);
     }, 1_500);
     return () => window.clearInterval(bonusSupplyTimer);
-  }, [isBonusBreakMode, timer.mode, timer.running]);
+  }, [activeBuffs.goldBoost, isBonusBreakMode, timer.mode, timer.running]);
   useEffect(() => {
     if (!hydrated || !timer.running || timer.mode !== "focus") return;
     const buffTimer = window.setInterval(() => {
@@ -292,131 +353,133 @@ export default function Home() {
   return (
     <main className={`flex h-[100dvh] w-screen items-center justify-center overflow-hidden p-2 transition-colors duration-700 sm:p-4 ${isBreak ? "bg-neutral-100 text-neutral-950" : "bg-neutral-950 text-white"}`}>
       <div className="flex h-full w-full max-w-[1380px] items-center justify-center gap-4 overflow-hidden">
-      <section className={`relative isolate flex h-full max-h-[100dvh] w-full max-w-5xl flex-col justify-between overflow-hidden rounded-2xl border shadow-2xl transition-colors duration-700 ${isBreak ? "border-neutral-300 bg-neutral-50 shadow-neutral-400/30" : "border-neutral-800 bg-neutral-900 shadow-black/60"}`}>
-        <div className={`pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 select-none whitespace-nowrap text-[clamp(5rem,20vw,14rem)] font-black leading-none tracking-[-0.07em] tabular-nums transition-colors duration-700 ${isBreak ? "text-neutral-900" : "text-white/90"}`}>{time}</div>
-        <AdBannerSlot
-          variant="mobile"
-          className="absolute inset-x-2 top-[4.5rem] z-20 h-[50px] md:hidden"
-        />
-        <div className="absolute inset-x-0 bottom-0 top-[7.75rem] md:top-0">
-        <PhysicsCanvas
-          ref={physics}
-          counts={counts}
-          hydrated={hydrated}
-          onBonusTomato={recordBonusTomato}
-          onGoldenTomatoDrop={recordGoldenTomatoDrop}
-          activeBuffs={activeBuffs}
-          isUfoUnlocked={unlockedItems.ufo}
-          debugUfoMode={debugUfoMode}
-          isBonusBreakMode={isBonusBreakMode}
-          timerMode={timer.mode}
-          isTimerRunning={timer.running}
-          onAltitudeChange={recordAltitude}
-        />
-        </div>
-        <div className={`pointer-events-none absolute bottom-3 right-3 z-20 rounded-full border px-3 py-1.5 text-xs font-black tabular-nums backdrop-blur sm:bottom-5 sm:right-5 ${isBreak ? "border-neutral-300 bg-white/75 text-neutral-800" : "border-white/15 bg-neutral-950/60 text-white/80"}`}>
-          標高 {altitude.toLocaleString("ja-JP")} m
-        </div>
-        <div data-control-toolbar className={`absolute inset-x-3 top-3 z-30 flex items-center justify-between gap-3 overflow-x-auto rounded-full border p-2 backdrop-blur transition-colors duration-700 sm:inset-x-6 sm:top-5 ${isBreak ? "border-neutral-300 bg-white/75" : "border-neutral-800/80 bg-neutral-950/65"}`}>
-          <div className="flex shrink-0 items-center gap-2">
-            <button className={modeClass("focus")} aria-label="集中 25分" title="集中 25分" onClick={() => selectTimerMode("focus")}><Pencil size={17} />25m</button>
-            <button className={modeClass("break")} aria-label="休憩 5分" title="休憩 5分" onClick={() => selectTimerMode("break")}><Coffee size={17} />5m</button>
+        <section className={`relative isolate flex h-full max-h-[100dvh] w-full max-w-5xl flex-col justify-between overflow-hidden rounded-2xl border shadow-2xl transition-colors duration-700 ${isBreak ? "border-neutral-300 bg-neutral-50 shadow-neutral-400/30" : "border-neutral-800 bg-neutral-900 shadow-black/60"}`}>
+          <div className={`pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 select-none whitespace-nowrap text-[clamp(5rem,20vw,14rem)] font-black leading-none tracking-[-0.07em] tabular-nums transition-colors duration-700 ${isBreak ? "text-neutral-900" : "text-white/90"}`}>{time}</div>
+          <AdBannerSlot
+            variant="mobile"
+            className="absolute inset-x-2 top-[4.5rem] z-20 h-[50px] md:hidden"
+          />
+          <div className="absolute inset-x-0 bottom-0 top-[7.75rem] md:top-0">
+            <PhysicsCanvas
+              ref={physics}
+              counts={counts}
+              hydrated={hydrated}
+              onBonusTomato={recordBonusTomato}
+              onGoldenTomatoDrop={recordGoldenTomatoDrop}
+              activeBuffs={activeBuffs}
+              isUfoUnlocked={unlockedItems.ufo}
+              debugUfoMode={debugUfoMode}
+              isBonusBreakMode={isBonusBreakMode}
+              timerMode={timer.mode}
+              isTimerRunning={timer.running}
+              initialMaxAltitude={maxAltitude}
+              onAltitudeChange={recordAltitude}
+            />
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <button className={`${button} ${isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} aria-label="開始" title="開始" disabled={timer.running} onClick={timer.start}><Play size={18} fill="currentColor" /></button>
-            <button className={quietClass} aria-label="一時停止" title="一時停止" disabled={!timer.running} onClick={timer.pause}><Pause size={18} /></button>
-            <button className={quietClass} aria-label="リセット" title="リセット" onClick={resetTimer}><RotateCcw size={18} /></button>
-            <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.autoLoopEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`自動切り替え ${timer.autoLoopEnabled ? "ON" : "OFF"}`} title="自動切り替え" aria-pressed={timer.autoLoopEnabled} onClick={timer.toggleAutoLoop}><Repeat size={18} /></button>
-            <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.debugEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`デバッグ ${timer.debugEnabled ? "ON" : "OFF"}`} title="デバッグ" aria-pressed={timer.debugEnabled} onClick={timer.toggleDebug}><Zap size={18} fill={timer.debugEnabled ? "currentColor" : "none"} /></button>
-            <button className={quietClass} aria-label="ショップを開く" title="ショップ" onClick={() => setShopOpen(true)}><Store size={18} /></button>
-            <span className={`inline-flex items-center gap-1 rounded-full border border-amber-400/30 px-3 py-2 text-sm font-bold ${isBreak ? "bg-white/80 text-amber-700" : "bg-neutral-950/80 text-amber-300"}`} title="所持している金のトマト"><Sparkles size={16} />× {goldenTomatoes}</span>
-            <button
-              className={`${button} border ${debugUfoMode
-                ? isBreak
-                  ? "border-cyan-500/70 bg-cyan-100 text-cyan-800"
-                  : "border-cyan-400/70 bg-cyan-400/10 text-cyan-200"
-                : isBreak
-                  ? "border-neutral-300 bg-white/80 text-neutral-700"
-                  : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
-              aria-label={`UFOデバッグモード ${debugUfoMode ? "ON" : "OFF"}`}
-              title="UFOデバッグモード"
-              aria-pressed={debugUfoMode}
-              onClick={() => setDebugUfoMode((enabled) => !enabled)}
-            >
-              <Disc3 aria-hidden="true" className="text-sky-400" size={18} />
-            </button>
-            {isDevelopment && (
+          <div className={`pointer-events-none absolute bottom-3 right-3 z-20 rounded-full border px-3 py-1.5 text-xs font-black tabular-nums backdrop-blur sm:bottom-5 sm:right-5 ${isBreak ? "border-neutral-300 bg-white/75 text-neutral-800" : "border-white/15 bg-neutral-950/60 text-white/80"}`}>
+            {altitude.toLocaleString("ja-JP")} m
+          </div>
+          <div data-control-toolbar className={`absolute inset-x-3 top-3 z-30 flex items-center justify-between gap-3 overflow-x-auto rounded-full border p-2 backdrop-blur transition-colors duration-700 sm:inset-x-6 sm:top-5 ${isBreak ? "border-neutral-300 bg-white/75" : "border-neutral-800/80 bg-neutral-950/65"}`}>
+            <div className="flex shrink-0 items-center gap-2">
+              <button className={modeClass("focus")} aria-label="集中 25分" title="集中 25分" onClick={() => selectTimerMode("focus")}><Pencil size={17} />25m</button>
+              <button className={modeClass("break")} aria-label="休憩 5分" title="休憩 5分" onClick={() => selectTimerMode("break")}><Coffee size={17} />5m</button>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button className={`${button} ${isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} aria-label="開始" title="開始" disabled={timer.running} onClick={resumeTomatoCycle}><Play size={18} fill="currentColor" /></button>
+              <button className={quietClass} aria-label="一時停止" title="一時停止" disabled={!timer.running} onClick={pauseTomatoCycle}><Pause size={18} /></button>
+              <button className={quietClass} aria-label="リセット" title="リセット" onClick={resetTimer}><RotateCcw size={18} /></button>
+              <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.autoLoopEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`自動切り替え ${timer.autoLoopEnabled ? "ON" : "OFF"}`} title="自動切り替え" aria-pressed={timer.autoLoopEnabled} onClick={timer.toggleAutoLoop}><Repeat size={18} /></button>
+              <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.debugEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`デバッグ ${timer.debugEnabled ? "ON" : "OFF"}`} title="デバッグ" aria-pressed={timer.debugEnabled} onClick={timer.toggleDebug}><Zap size={18} fill={timer.debugEnabled ? "currentColor" : "none"} /></button>
+              <button className={quietClass} aria-label="ショップを開く" title="ショップ" onClick={() => setShopOpen(true)}><Store size={18} /></button>
+              <span className={`inline-flex items-center gap-1 rounded-full border border-amber-400/30 px-3 py-2 text-sm font-bold ${isBreak ? "bg-white/80 text-amber-700" : "bg-neutral-950/80 text-amber-300"}`} title="所持している金のトマト"><Sparkles size={16} />× {goldenTomatoes}</span>
               <button
-                className={`${button} border ${isBreak ? "border-violet-400/50 bg-violet-100 text-violet-700" : "border-violet-400/40 bg-violet-400/10 text-violet-300"}`}
-                aria-label="残り時間を10秒に短縮"
-                title="残り10秒にする"
-                onClick={() => timer.setRemainingSeconds(10)}
+                className={`${button} border ${debugUfoMode
+                  ? isBreak
+                    ? "border-cyan-500/70 bg-cyan-100 text-cyan-800"
+                    : "border-cyan-400/70 bg-cyan-400/10 text-cyan-200"
+                  : isBreak
+                    ? "border-neutral-300 bg-white/80 text-neutral-700"
+                    : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
+                aria-label={`UFOデバッグモード ${debugUfoMode ? "ON" : "OFF"}`}
+                title="UFOデバッグモード"
+                aria-pressed={debugUfoMode}
+                onClick={() => setDebugUfoMode((enabled) => !enabled)}
               >
-                <FastForward aria-hidden="true" size={18} />
-                <span className="text-[10px] tabular-nums">10s</span>
+                <Disc3 aria-hidden="true" className="text-sky-400" size={18} />
               </button>
-            )}
-          </div>
-        </div>
-
-        {shopOpen && (
-          <div className={`absolute inset-0 z-50 grid place-items-center p-4 backdrop-blur-sm ${isBreak ? "bg-neutral-200/75" : "bg-neutral-950/75"}`} role="presentation" onMouseDown={() => setShopOpen(false)}>
-            <section className={`w-full max-w-lg rounded-3xl border p-6 shadow-2xl ${isBreak ? "border-neutral-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900"}`} role="dialog" aria-modal="true" aria-labelledby="shop-title" onMouseDown={(event) => event.stopPropagation()}>
-              <header className="mb-6 flex items-center justify-between gap-4">
-                <div>
-                  <h2 id="shop-title" className="flex items-center gap-2 text-xl font-black"><Store className={isBreak ? "text-emerald-500" : "text-red-500"} />アイテム交換所</h2>
-                  <p className={`mt-1 text-sm ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>金のトマトをバフと交換できます</p>
-                </div>
-                <button className={quietClass} aria-label="ショップを閉じる" onClick={() => setShopOpen(false)}><X size={18} /></button>
-              </header>
-              <div className="mb-5 flex flex-wrap items-center gap-2">
-                <div className={`inline-flex items-center gap-2 rounded-full border border-amber-400/30 px-4 py-2 font-bold ${isBreak ? "bg-neutral-100 text-amber-700" : "bg-neutral-950 text-amber-300"}`}><Sparkles size={18} />所持 × {goldenTomatoes}</div>
-                {unlockedItems.ufo ? (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/70 bg-emerald-400/15 px-4 py-2 text-xs font-black tracking-wide text-emerald-300"><Radio size={17} />UFO UNLOCKED</span>
-                ) : (
-                  <button className={`${button} bg-sky-400 text-zinc-950`} disabled={goldenTomatoes < 100} onClick={unlockUfo}><Radio size={17} />UFO解除 <Sparkles size={15} />× 100</button>
-                )}
-              </div>
-              <div className="grid gap-3">
-                <ShopItem title="ダブルドロップ" description="今後、1回の供給量を増やすためのバフです。" cost={3} active={activeBuffs.doubleDrop} remainingSeconds={buffRemaining.doubleDrop} affordable={goldenTomatoes >= 3} onActivate={() => activateBuff("doubleDrop", 3)} light={isBreak} />
-                <ShopItem title="気球ブースト" description="気球イベントを強化するためのバフです。" cost={5} active={activeBuffs.balloonBoost} remainingSeconds={buffRemaining.balloonBoost} affordable={goldenTomatoes >= 5} onActivate={() => activateBuff("balloonBoost", 5)} light={isBreak} />
-                <ShopItem title="ゴールドブースト" description="金トマトの出現確率をアップさせるバフです。" cost={10} active={activeBuffs.goldBoost} remainingSeconds={buffRemaining.goldBoost} affordable={goldenTomatoes >= 10} onActivate={() => activateBuff("goldBoost", 10)} light={isBreak} />
-              </div>
-            </section>
-          </div>
-        )}
-        {rewardOpen && (
-          <div className={`absolute inset-0 z-[60] grid place-items-center p-4 backdrop-blur-md ${isBreak ? "bg-neutral-200/85" : "bg-neutral-950/85"}`}>
-            <section className={`w-full max-w-md rounded-3xl border p-6 text-center shadow-2xl ${isBreak ? "border-emerald-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900 text-white"}`} role="dialog" aria-modal="true" aria-labelledby="reward-title">
-              <Gift className="mx-auto mb-3 text-amber-400" size={40} />
-              <h2 id="reward-title" className="text-xl font-black">お疲れ様でした！</h2>
-              <p className={`mt-3 text-sm leading-relaxed ${isBreak ? "text-neutral-600" : "text-neutral-300"}`}>
-                動画を見て休憩ボーナストマトモードを発動（5分間）
-              </p>
-              {rewardWatching ? (
-                <div className="mt-6 rounded-2xl border border-amber-400/40 bg-black/80 p-8 text-white">
-                  <p className="text-xs font-bold tracking-[0.25em] text-white/60">REWARD VIDEO</p>
-                  <p className="mt-3 text-5xl font-black tabular-nums">{rewardSeconds}</p>
-                  <p className="mt-2 text-xs text-white/60">再生完了までお待ちください</p>
-                </div>
-              ) : (
-                <div className="mt-6 grid gap-3">
-                  <button className={`${button} w-full bg-amber-400 text-neutral-950`} onClick={() => { setRewardSeconds(5); setRewardWatching(true); }}>
-                    <Play size={18} fill="currentColor" />動画を見てボーナス獲得
-                  </button>
-                  <button className={`${button} w-full ${isBreak ? "bg-neutral-200 text-neutral-800" : "bg-neutral-800 text-neutral-200"}`} onClick={() => { clearBonusBreakState(); timer.start(); }}>
-                    スキップして通常休憩
-                  </button>
-                </div>
+              {isDevelopment && (
+                <button
+                  className={`${button} border ${isBreak ? "border-violet-400/50 bg-violet-100 text-violet-700" : "border-violet-400/40 bg-violet-400/10 text-violet-300"}`}
+                  aria-label="残り時間を10秒に短縮"
+                  title="残り10秒にする"
+                  onClick={() => timer.setRemainingSeconds(10)}
+                >
+                  <FastForward aria-hidden="true" size={18} />
+                  <span className="text-[10px] tabular-nums">10s</span>
+                </button>
               )}
-            </section>
+            </div>
           </div>
-        )}
-      </section>
-      <AdBannerSlot
-        variant="desktop"
-        className="hidden h-[min(600px,calc(100dvh-2rem))] w-[300px] shrink-0 md:flex xl:w-[336px]"
-      />
+
+          {shopOpen && (
+            <div className={`absolute inset-0 z-50 grid place-items-center p-4 backdrop-blur-sm ${isBreak ? "bg-neutral-200/75" : "bg-neutral-950/75"}`} role="presentation" onMouseDown={() => setShopOpen(false)}>
+              <section className={`w-full max-w-lg rounded-3xl border p-6 shadow-2xl ${isBreak ? "border-neutral-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900"}`} role="dialog" aria-modal="true" aria-labelledby="shop-title" onMouseDown={(event) => event.stopPropagation()}>
+                <header className="mb-6 flex items-center justify-between gap-4">
+                  <div>
+                    <h2 id="shop-title" className="flex items-center gap-2 text-xl font-black"><Store className={isBreak ? "text-emerald-500" : "text-red-500"} />アイテム交換所</h2>
+                    <p className={`mt-1 text-sm ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>金トマトをアイテムと交換できます</p>
+                  </div>
+                  <button className={quietClass} aria-label="ショップを閉じる" onClick={() => setShopOpen(false)}><X size={18} /></button>
+                </header>
+                <div className="mb-5 flex flex-wrap items-center gap-2">
+                  <div className={`inline-flex items-center gap-2 rounded-full border border-amber-400/30 px-4 py-2 font-bold ${isBreak ? "bg-neutral-100 text-amber-700" : "bg-neutral-950 text-amber-300"}`}><Sparkles size={18} />所持 × {goldenTomatoes}</div>
+                  {unlockedItems.ufo ? (
+                    <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/70 bg-emerald-400/15 px-4 py-2 text-xs font-black tracking-wide text-emerald-300"><Radio size={17} />UFO UNLOCKED</span>
+                  ) : (
+                    <button className={`${button} bg-sky-400 text-zinc-950`} disabled={goldenTomatoes < 100} onClick={unlockUfo}><Radio size={17} />UFO解除 <Sparkles size={15} />× 100</button>
+                  )}
+                </div>
+                <div className="grid gap-3">
+                  <ShopItem title="ダブルドロップ" description="1回の供給量を増やすためのアイテムです。（有効時間: 30分）" cost={3} active={activeBuffs.doubleDrop} remainingSeconds={buffRemaining.doubleDrop} affordable={goldenTomatoes >= 3} onActivate={() => activateBuff("doubleDrop", 3)} light={isBreak} />
+                  <ShopItem title="気球ブースト" description="気球イベントを強化するためのアイテムです。（有効時間: 30分）" cost={5} active={activeBuffs.balloonBoost} remainingSeconds={buffRemaining.balloonBoost} affordable={goldenTomatoes >= 5} onActivate={() => activateBuff("balloonBoost", 5)} light={isBreak} />
+                  <ShopItem title="ゴールドブースト" description="金トマトの出現確率をアップさせるアイテムです。（有効時間: 30分）" cost={10} active={activeBuffs.goldBoost} remainingSeconds={buffRemaining.goldBoost} affordable={goldenTomatoes >= 10} onActivate={() => activateBuff("goldBoost", 10)} light={isBreak} />
+                </div>
+                <p className={`mt-4 text-xs opacity-75 ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>※休憩中はアイテムの減算は行われません。</p>
+              </section>
+            </div>
+          )}
+          {rewardOpen && (
+            <div className={`absolute inset-0 z-[60] grid place-items-center p-4 backdrop-blur-md ${isBreak ? "bg-neutral-200/85" : "bg-neutral-950/85"}`}>
+              <section className={`w-full max-w-md rounded-3xl border p-6 text-center shadow-2xl ${isBreak ? "border-emerald-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900 text-white"}`} role="dialog" aria-modal="true" aria-labelledby="reward-title">
+                <Gift className="mx-auto mb-3 text-amber-400" size={40} />
+                <h2 id="reward-title" className="text-xl font-black">お疲れ様でした！</h2>
+                <p className={`mt-3 text-sm leading-relaxed ${isBreak ? "text-neutral-600" : "text-neutral-300"}`}>
+                  動画を見て休憩ボーナストマトモードを発動（5分間）
+                </p>
+                {rewardWatching ? (
+                  <div className="mt-6 rounded-2xl border border-amber-400/40 bg-black/80 p-8 text-white">
+                    <p className="text-xs font-bold tracking-[0.25em] text-white/60">REWARD VIDEO</p>
+                    <p className="mt-3 text-5xl font-black tabular-nums">{rewardSeconds}</p>
+                    <p className="mt-2 text-xs text-white/60">再生完了までお待ちください</p>
+                  </div>
+                ) : (
+                  <div className="mt-6 grid gap-3">
+                    <button className={`${button} w-full bg-amber-400 text-neutral-950`} onClick={() => { setRewardSeconds(5); setRewardWatching(true); }}>
+                      <Play size={18} fill="currentColor" />動画を見てボーナス獲得
+                    </button>
+                    <button className={`${button} w-full ${isBreak ? "bg-neutral-200 text-neutral-800" : "bg-neutral-800 text-neutral-200"}`} onClick={() => { clearBonusBreakState(); timer.start(); }}>
+                      スキップして通常休憩
+                    </button>
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+        </section>
+        <AdBannerSlot
+          variant="desktop"
+          className="hidden h-[min(600px,calc(100dvh-2rem))] w-[300px] shrink-0 md:flex xl:w-[336px]"
+        />
       </div>
     </main>
   );
@@ -430,7 +493,6 @@ function ShopItem({ title, description, cost, active, remainingSeconds, affordab
       <div>
         <h3 className="font-bold">{title}</h3>
         <p className={`mt-1 text-sm ${light ? "text-neutral-600" : "text-neutral-400"}`}>{description}</p>
-        <p className={`mt-2 text-xs font-medium ${light ? "text-neutral-500" : "text-neutral-500"}`}>※集中タイマー実行中に合計30分間有効（休憩中は減算されません）</p>
       </div>
       {active ? (
         <div className="shrink-0 text-center">

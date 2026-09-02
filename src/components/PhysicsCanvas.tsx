@@ -19,6 +19,7 @@ type Props = {
   isBonusBreakMode?: boolean;
   timerMode: "focus" | "break";
   isTimerRunning: boolean;
+  initialMaxAltitude?: number;
   onAltitudeChange: (altitude: number) => void;
 };
 type CameraBounds = { left: number; right: number; top: number; bottom: number };
@@ -32,6 +33,7 @@ type BirdDelivery = {
   isSquishy: boolean;
   released: boolean;
   vehicle: "bird" | "plane";
+  nextContrailAt: number;
 };
 type TomatoSpec = { golden: boolean; radius: number; isSquishy: boolean };
 type TomatoBodyData = {
@@ -46,6 +48,10 @@ type TomatoBodyData = {
   ripeness: number;
   invincibleUntil: number;
   isDud: boolean;
+  isInfected: boolean;
+  burstAt: number;
+  baseRestitution: number;
+  baseFriction: number;
 };
 type JuiceParticle = {
   x: number;
@@ -53,6 +59,14 @@ type JuiceParticle = {
   velocityX: number;
   velocityY: number;
   radius: number;
+  life: number;
+  maxLife: number;
+};
+type ContrailParticle = {
+  x: number;
+  y: number;
+  radius: number;
+  alpha: number;
   life: number;
   maxLife: number;
 };
@@ -89,12 +103,51 @@ type UfoEvent = {
   nextYTargetAt: number;
   yLerpFactor: number;
 };
+type AlienEvent = {
+  startedAt: number;
+  duration: number;
+  direction: 1 | -1;
+  phase1: number;
+  phase2: number;
+  speed1: number;
+  speed2: number;
+  amplitude1: number;
+  amplitude2: number;
+};
+type StarParticle = {
+  normalizedX: number;
+  normalizedY: number;
+  radius: number;
+  alpha: number;
+  twinkleSpeed: number;
+  phase: number;
+  layer: 0 | 1 | 2;
+  horizontalSpeed: number;
+};
+type AuroraEvent = {
+  startedAt: number;
+  fadeInDuration: number;
+  holdDuration: number;
+  fadeOutDuration: number;
+  direction: 1 | -1;
+  phase: number;
+};
+type ShootingStarEvent = {
+  startedAt: number;
+  duration: number;
+  startXRatio: number;
+  startYRatio: number;
+  direction: 1 | -1;
+  travelXRatio: number;
+  travelYRatio: number;
+};
 type PhysicsDiagnosticAlert = {
   title: string;
   detail: string;
   phase: string;
   timestamp: number;
 };
+type SavedCameraState = { scale: number; offsetY: number };
 const MIN_DYNAMIC_CAMERA_SCALE = 0.20;
 const UFO_CHECK_INTERVAL_MS = 45_000;
 const UFO_APPEARANCE_CHANCE = 0.03;
@@ -105,10 +158,20 @@ const TERRAIN_EVALUATION_INTERVAL = 60;
 const TERRAIN_SEGMENT_COUNT = 96;
 const TERRAIN_VIEWPORT_MARGIN = 50;
 const SPACE_EVENT_ALTITUDE = 3_000;
-const SUPPLY_GOLDEN_CHANCE = 0.10;
-const BONUS_BREAK_GOLDEN_CHANCE = 0.20;
-const SUPPLY_GIANT_CHANCE = 0.30;
-const BONUS_BREAK_GIANT_CHANCE = 0.45;
+const ALIEN_EVENT_ALTITUDE = 10_000;
+const ALIEN_CHECK_INTERVAL_MS = 30_000;
+const ALIEN_APPEARANCE_CHANCE = 0.05;
+const AURORA_EVENT_ALTITUDE = 5_000;
+const AURORA_CHECK_INTERVAL_MS = 60_000;
+const AURORA_APPEARANCE_CHANCE = 0.18;
+const SHOOTING_STAR_EVENT_ALTITUDE = 3_000;
+const SHOOTING_STAR_CHECK_INTERVAL_MS = 60_000;
+const SHOOTING_STAR_APPEARANCE_CHANCE = 0.18;
+const SUPPLY_GOLDEN_CHANCE = 0.01;
+const BONUS_BREAK_GOLDEN_CHANCE = 0.10;
+const SUPPLY_GIANT_CHANCE = 0.02;
+const BONUS_BREAK_GIANT_CHANCE = 0.30;
+const SAVED_CAMERA_STORAGE_KEY = "pomo_saved_camera";
 
 export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function PhysicsCanvas(
   {
@@ -122,6 +185,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     isBonusBreakMode = false,
     timerMode,
     isTimerRunning,
+    initialMaxAltitude = 0,
     onAltitudeChange,
   }, ref,
 ) {
@@ -129,6 +193,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const addRef = useRef<(golden?: boolean, settled?: boolean) => void>(() => undefined);
   const removeGoldenRef = useRef<(count: number) => number>(() => 0);
+  const saveCameraStateRef = useRef<() => void>(() => undefined);
   const currentScale = useRef<number>(1);
   const targetScale = useRef<number>(1);
   const currentOffsetY = useRef<number>(0);
@@ -145,6 +210,9 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
   const altitudeChangeRef = useRef(onAltitudeChange);
   const breakModeRef = useRef(timerMode === "break");
   const themeDirtyRef = useRef(false);
+  activeBuffsRef.current = activeBuffs;
+  isBonusBreakModeRef.current = isBonusBreakMode === true;
+  breakModeRef.current = timerMode === "break";
 
   useImperativeHandle(ref, () => ({
     drop: (golden) => addRef.current(golden),
@@ -164,6 +232,9 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     breakModeRef.current = timerMode === "break";
     themeDirtyRef.current = true;
   }, [isBonusBreakMode, isTimerRunning, timerMode]);
+  useEffect(() => {
+    if (!isTimerRunning) saveCameraStateRef.current();
+  }, [isTimerRunning]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -185,21 +256,61 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     let flightScreenY = 150;
     let settledPileTop = Number.POSITIVE_INFINITY;
     let leftWall: Matter.Body, rightWall: Matter.Body, floor: Matter.Body;
+    let cloudFloorBody: Matter.Body | null = null;
+    let cloudFloorParts: Matter.Body[] = [];
+    let cloudFloorEnabled = false;
+    let cloudFloorCleanupY = Number.POSITIVE_INFINITY;
     let wallHeight = 1, floorWidth = 1;
     const activeBodies = new Set<Matter.Body>();
     const sleepingBodies = new Set<Matter.Body>();
     const pendingSleeping = new Set<Matter.Body>();
     const staticCoreBodies = new Set<Matter.Body>();
+    const lowerStaticBodies = new Set<Matter.Body>();
     const birdDeliveries: BirdDelivery[] = [];
     const balloonEvents: BalloonEvent[] = [];
     const ufoEvents: UfoEvent[] = [];
+    const alienEvents: AlienEvent[] = [];
     const deferredDeliveries: boolean[] = [];
     const juiceParticles: JuiceParticle[] = [];
+    const contrailParticles: ContrailParticle[] = [];
+    const starClusterCenters = Array.from({ length: 7 }, () => ({
+      x: Math.random(),
+      y: Math.random(),
+    }));
+    const starParticles: StarParticle[] = Array.from({ length: 112 }, (_, index) => {
+      const layer = (index % 3) as 0 | 1 | 2;
+      const cluster = starClusterCenters[Math.floor(Math.random() * starClusterCenters.length)];
+      const clustered = Math.random() < 0.72;
+      const spread = 0.055 + Math.random() * 0.12;
+      const normalizedX = clustered
+        ? ((cluster.x + (Math.random() + Math.random() - 1) * spread) % 1 + 1) % 1
+        : Math.random();
+      const normalizedY = clustered
+        ? ((cluster.y + (Math.random() + Math.random() - 1) * spread) % 1 + 1) % 1
+        : Math.random();
+      const layerRadius = layer === 0 ? [0.5, 1.15] : layer === 1 ? [0.8, 1.8] : [1.35, 2.5];
+      return {
+        normalizedX,
+        normalizedY,
+        radius: layerRadius[0] + Math.random() * (layerRadius[1] - layerRadius[0]),
+        alpha: 0.42 + Math.random() * 0.48,
+        twinkleSpeed: 0.00045 + Math.random() * 0.00135,
+        phase: Math.random() * Math.PI * 2,
+        layer,
+        horizontalSpeed: 0.0015 + layer * 0.0012 + Math.random() * 0.0014,
+      };
+    });
     const ripeningBodies = new Set<Matter.Body>();
     const pressuredBodies = new Set<Matter.Body>();
     let ufoEventTime = performance.now();
+    let windOffset = 0;
     let previousFrameTime = performance.now();
     let nextUfoCheckAt = ufoEventTime + UFO_CHECK_INTERVAL_MS;
+    let nextAlienCheckAt = ufoEventTime + ALIEN_CHECK_INTERVAL_MS;
+    let nextAuroraCheckAt = ufoEventTime + AURORA_CHECK_INTERVAL_MS;
+    let auroraEvent: AuroraEvent | null = null;
+    let nextShootingStarCheckAt = ufoEventTime + SHOOTING_STAR_CHECK_INTERVAL_MS;
+    let shootingStarEvent: ShootingStarEvent | null = null;
     let pageHidden = document.hidden;
     let previousDebugUfoMode = debugUfoModeRef.current;
     let coreEvaluationFrame = 0;
@@ -217,7 +328,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     let cacheScale = 1;
     let cacheOffsetY = 0;
     let lastReportedAltitude = -1;
-    let currentAltitude = 0;
+    let currentAltitude = Math.max(0, initialMaxAltitude);
+    let cameraScaleLocked = false;
     let lastPhysicsPhase = "initialization";
     let diagnosticAlert: PhysicsDiagnosticAlert | null = null;
     const diagnosticLogTimes = new Map<string, number>();
@@ -241,7 +353,12 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       pageHidden = document.hidden;
       previousFrameTime = performance.now();
       deferredDeliveries.length = 0;
-      if (!pageHidden) nextUfoCheckAt = ufoEventTime + UFO_CHECK_INTERVAL_MS;
+      if (!pageHidden) {
+        nextUfoCheckAt = ufoEventTime + UFO_CHECK_INTERVAL_MS;
+        nextAlienCheckAt = ufoEventTime + ALIEN_CHECK_INTERVAL_MS;
+        nextAuroraCheckAt = ufoEventTime + AURORA_CHECK_INTERVAL_MS;
+        nextShootingStarCheckAt = ufoEventTime + SHOOTING_STAR_CHECK_INTERVAL_MS;
+      }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
@@ -291,6 +408,41 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       camera.current = bounds;
     };
 
+    const createCloudFloor = (bounds: CameraBounds) => {
+      if (cloudFloorBody) Composite.remove(engine.world, cloudFloorBody);
+      const scale = Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
+      const visibleWidth = bounds.right - bounds.left;
+      const cloudY = bounds.bottom - 50 / scale;
+      const nominalRadius = 42 / scale;
+      const overlapSpacing = nominalRadius * 1.42;
+      const puffCount = Math.max(3, Math.ceil(visibleWidth / overlapSpacing) + 1);
+      const coveredWidth = overlapSpacing * (puffCount - 1);
+      const startX = (bounds.left + bounds.right - coveredWidth) / 2;
+      cloudFloorParts = Array.from({ length: puffCount }, (_, index) => {
+        const radius = nominalRadius * (0.88 + (index % 3) * 0.06);
+        const y = cloudY + (index % 2 === 0 ? 0 : nominalRadius * 0.08);
+        return Bodies.circle(startX + index * overlapSpacing, y, radius, {
+          isStatic: true,
+          label: "cloud-floor-puff",
+          friction: 0.72,
+          restitution: 0,
+          render: { visible: false },
+        });
+      });
+      cloudFloorBody = Matter.Body.create({
+        parts: cloudFloorParts,
+        isStatic: true,
+        label: "cloud-floor",
+        friction: 0.72,
+        restitution: 0,
+        render: { visible: false },
+      });
+      cloudFloorCleanupY = bounds.bottom + 300 / scale;
+      cloudFloorEnabled = true;
+      floor.collisionFilter.mask = 0;
+      Composite.add(engine.world, cloudFloorBody);
+    };
+
     const resize = () => {
       const rect = container.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
@@ -306,6 +458,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       sleepingCacheDirty = true;
       forceCacheRefresh = true;
       if (leftWall) syncBoundaries(getBounds(currentScale.current));
+      if (cloudFloorEnabled && floor) createCloudFloor(getBounds(currentScale.current));
       buildBackgroundCanvas();
     };
 
@@ -352,6 +505,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
             ripeness: isSquishy ? 1 : 0,
             invincibleUntil: 0,
             isDud: false,
+            isInfected: false,
+            burstAt: 0,
+            baseRestitution: restitution,
+            baseFriction: friction,
           },
         },
       });
@@ -374,7 +531,37 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         if (cachedSleeping.has(body)) forceCacheRefresh = true;
         sleepingCacheDirty = true;
       });
+      return body;
     };
+
+    const saveCameraState = () => {
+      try {
+        const savedCamera: SavedCameraState = {
+          scale: currentScale.current,
+          offsetY: currentOffsetY.current,
+        };
+        localStorage.setItem(SAVED_CAMERA_STORAGE_KEY, JSON.stringify(savedCamera));
+      } catch {
+        return;
+      }
+    };
+    saveCameraStateRef.current = saveCameraState;
+
+    const readSavedCameraState = (): SavedCameraState | null => {
+      try {
+        const parsed: unknown = JSON.parse(localStorage.getItem(SAVED_CAMERA_STORAGE_KEY) ?? "null");
+        if (!parsed || typeof parsed !== "object") return null;
+        const value = parsed as Partial<SavedCameraState>;
+        if (!Number.isFinite(value.scale) || !Number.isFinite(value.offsetY)) return null;
+        return {
+          scale: Math.min(1, Math.max(MIN_DYNAMIC_CAMERA_SCALE, Number(value.scale))),
+          offsetY: Math.max(0, Number(value.offsetY)),
+        };
+      } catch {
+        return null;
+      }
+    };
+
     const createRadius = (giantChance = SUPPLY_GIANT_CHANCE) => {
       const baseRadius = 20 + Math.random() * 5;
       const sizeRoll = Math.random();
@@ -384,22 +571,30 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       return baseRadius * sizeScale;
     };
 
-    const createTomatoSpec = (golden?: boolean): TomatoSpec => {
-      const goldenChance = isBonusBreakModeRef.current
+    const isBonusBreakActive = () => (
+      isBonusBreakModeRef.current === true && breakModeRef.current === true
+    );
+
+    const getGoldenChance = () => {
+      const baseChance = isBonusBreakActive()
         ? BONUS_BREAK_GOLDEN_CHANCE
-        : activeBuffsRef.current.goldBoost ? SUPPLY_GOLDEN_CHANCE * 2 : SUPPLY_GOLDEN_CHANCE;
+        : SUPPLY_GOLDEN_CHANCE;
+      return activeBuffsRef.current.goldBoost ? baseChance * 2 : baseChance;
+    };
+
+    const createTomatoSpec = (golden?: boolean): TomatoSpec => {
+      const bonusBreakActive = isBonusBreakActive();
+      const goldenChance = getGoldenChance();
       const isGolden = golden ?? Math.random() < goldenChance;
       return {
         golden: isGolden,
-        radius: createRadius(isBonusBreakModeRef.current ? BONUS_BREAK_GIANT_CHANCE : SUPPLY_GIANT_CHANCE),
+        radius: createRadius(bonusBreakActive ? BONUS_BREAK_GIANT_CHANCE : SUPPLY_GIANT_CHANCE),
         isSquishy: !isGolden && Math.random() < 0.04,
       };
     };
 
     const createMediumTomatoSpec = (golden?: boolean): TomatoSpec => {
-      const goldenChance = isBonusBreakModeRef.current
-        ? BONUS_BREAK_GOLDEN_CHANCE
-        : activeBuffsRef.current.goldBoost ? SUPPLY_GOLDEN_CHANCE * 2 : SUPPLY_GOLDEN_CHANCE;
+      const goldenChance = getGoldenChance();
       const isGolden = golden ?? Math.random() < goldenChance;
       return {
         golden: isGolden,
@@ -418,7 +613,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
 
     const infectNearbyTomatoes = (source: Matter.Body, sourceRadius: number) => {
       const infectionRadius = sourceRadius * 2;
-      const candidates = new Set([...activeBodies, ...sleepingBodies]);
+      const candidates = new Set([...activeBodies, ...sleepingBodies, ...staticCoreBodies]);
       for (const candidate of candidates) {
         if (candidate === source || candidate.label !== "tomato") continue;
         const tomato = candidate.plugin.tomato as TomatoBodyData;
@@ -429,9 +624,12 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         );
         if (distance > infectionRadius || Math.random() >= 0.10) continue;
         tomato.isSquishy = true;
+        tomato.isInfected = true;
         tomato.ripeness = 0;
         tomato.isDud = Math.random() < 0.01;
-        tomato.invincibleUntil = tomato.isDud ? 0 : Date.now() + createInvincibilityDuration();
+        const burstAt = Date.now() + createInvincibilityDuration();
+        tomato.invincibleUntil = tomato.isDud ? 0 : burstAt;
+        tomato.burstAt = burstAt;
         ripeningBodies.add(candidate);
         if (cachedSleeping.has(candidate)) {
           sleepingCacheDirty = true;
@@ -453,6 +651,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         if (restoreStaticCore) {
           Body.setStatic(neighbor, false);
           staticCoreBodies.delete(neighbor);
+          lowerStaticBodies.delete(neighbor);
           sleepingBodies.delete(neighbor);
           pendingSleeping.delete(neighbor);
           activeBodies.add(neighbor);
@@ -615,7 +814,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           maxLife: life,
         });
       }
-      wakeNearbyTomatoes(body, tomato.radius);
+      if (!tomato.isInfected) wakeNearbyTomatoes(body, tomato.radius);
       infectNearbyTomatoes(body, tomato.radius);
       Composite.remove(engine.world, body);
       Matter.Events.off(body, "sleepStart");
@@ -624,6 +823,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       sleepingBodies.delete(body);
       pendingSleeping.delete(body);
       staticCoreBodies.delete(body);
+      lowerStaticBodies.delete(body);
       ripeningBodies.delete(body);
       pressuredBodies.delete(body);
       if (cachedSleeping.delete(body)) {
@@ -741,6 +941,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         sleepingBodies.delete(body);
         pendingSleeping.delete(body);
         staticCoreBodies.delete(body);
+        lowerStaticBodies.delete(body);
         ripeningBodies.delete(body);
         pressuredBodies.delete(body);
         if (cachedSleeping.delete(body)) {
@@ -765,7 +966,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           continue;
         }
         const speed = Math.hypot(body.velocity.x, body.velocity.y);
-        if (speed > 25) {
+        if (speed > 30) {
           const velocityScale = 25 / speed;
           Body.setVelocity(body, {
             x: body.velocity.x * velocityScale,
@@ -784,12 +985,100 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       }
     };
 
+    const stabilizeLowerPileBeforeUpdate = () => {
+      const visibleBounds = camera.current;
+      const visibleWidth = Math.max(1, visibleBounds.right - visibleBounds.left);
+      const visibleHeight = Math.max(1, visibleBounds.bottom - visibleBounds.top);
+      const centralCoreLeft = visibleBounds.left + visibleWidth * 0.25;
+      const centralCoreRight = visibleBounds.left + visibleWidth * 0.75;
+      const lowerPressureZoneY = visibleBounds.top + visibleHeight * 0.68;
+      const offscreenStaticY = visibleBounds.bottom + 300 / Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
+      const buriedDepthY = Number.isFinite(settledPileTop)
+        ? settledPileTop + DEEP_CORE_INSET
+        : Number.POSITIVE_INFINITY;
+      const candidates = new Set([...activeBodies, ...sleepingBodies]);
+      let cacheChanged = false;
+
+      for (const body of candidates) {
+        if (body.label !== "tomato") continue;
+        const tomato = body.plugin.tomato as TomatoBodyData | undefined;
+        if (!tomato) continue;
+        if (cloudFloorEnabled && body.position.y > cloudFloorCleanupY) {
+          removeInvalidBody(body);
+          continue;
+        }
+        const insideCentralCore = body.position.x >= centralCoreLeft && body.position.x <= centralCoreRight;
+        const inSideShell = !insideCentralCore;
+        const inLowerPressureZone = body.position.y >= lowerPressureZoneY;
+        const deeplyBuried = inLowerPressureZone && body.position.y >= buriedDepthY;
+        const belowViewportMargin = !cloudFloorEnabled && body.position.y >= offscreenStaticY;
+
+        if (body.isStatic && inSideShell && !belowViewportMargin && staticCoreBodies.has(body)) {
+          Body.setStatic(body, false);
+          Matter.Sleeping.set(body, false);
+          staticCoreBodies.delete(body);
+          lowerStaticBodies.delete(body);
+          sleepingBodies.delete(body);
+          pendingSleeping.delete(body);
+          activeBodies.add(body);
+          cacheChanged = true;
+        }
+
+        if (!body.isStatic) {
+          body.restitution = inSideShell
+            ? 0.075
+            : inLowerPressureZone ? 0 : tomato.baseRestitution;
+          body.friction = inSideShell
+            ? 0.3
+            : inLowerPressureZone ? 0.9 : tomato.baseFriction;
+        }
+
+        const stationaryDeepBody = insideCentralCore
+          && deeplyBuried
+          && (body.isSleeping || body.speed < 0.08);
+        if (!body.isStatic && (belowViewportMargin || stationaryDeepBody)) {
+          Body.setVelocity(body, { x: 0, y: 0 });
+          Body.setAngularVelocity(body, 0);
+          Matter.Sleeping.set(body, true);
+          Body.setStatic(body, true);
+          activeBodies.delete(body);
+          pendingSleeping.add(body);
+          sleepingBodies.add(body);
+          staticCoreBodies.add(body);
+          lowerStaticBodies.add(body);
+          if (cachedSleeping.delete(body)) cacheChanged = true;
+          cacheChanged = true;
+          continue;
+        }
+
+        if (!body.isStatic
+          && insideCentralCore
+          && inLowerPressureZone
+          && body.speed < 0.15
+          && !body.isSleeping) {
+          Matter.Sleeping.set(body, true);
+        }
+      }
+
+      if (cacheChanged) {
+        sleepingCacheDirty = true;
+        forceCacheRefresh = true;
+      }
+    };
+
+    const handleBeforeUpdate = () => {
+      lastPhysicsPhase = "beforeUpdate lower-pile stabilization";
+      sanitizeWorldBodies();
+      stabilizeLowerPileBeforeUpdate();
+    };
+
     const handleAfterUpdate = () => {
       lastPhysicsPhase = "afterUpdate";
       sanitizeWorldBodies();
     };
 
     Matter.Events.on(engine, "collisionStart", handleStrongImpact);
+    Matter.Events.on(engine, "beforeUpdate", handleBeforeUpdate);
     Matter.Events.on(engine, "afterUpdate", handleAfterUpdate);
 
     const startDelivery = (golden = false) => {
@@ -822,6 +1111,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         isSquishy: deliverySpec.isSquishy,
         released: false,
         vehicle: useSpaceVehicles ? "plane" : "bird",
+        nextContrailAt: ufoEventTime,
       });
     };
     const queueBirdDelivery = (golden = false) => {
@@ -853,6 +1143,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         sleepingBodies.delete(body);
         pendingSleeping.delete(body);
         staticCoreBodies.delete(body);
+        lowerStaticBodies.delete(body);
         ripeningBodies.delete(body);
         pressuredBodies.delete(body);
         if (cachedSleeping.delete(body)) removedCachedBody = true;
@@ -870,20 +1161,25 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
 
     const restoreStaticCoreBodies = () => {
       if (!staticCoreBodies.size) return;
-      staticCoreBodies.forEach((body) => {
+      const restorableBodies = [...staticCoreBodies].filter((body) => !lowerStaticBodies.has(body));
+      restorableBodies.forEach((body) => {
         Body.setStatic(body, false);
         Matter.Sleeping.set(body, false);
         sleepingBodies.delete(body);
         pendingSleeping.delete(body);
         activeBodies.add(body);
+        staticCoreBodies.delete(body);
       });
-      staticCoreBodies.clear();
+      if (!restorableBodies.length) return;
       sleepingCacheDirty = true;
       forceCacheRefresh = true;
     };
 
     const optimizeDeepCore = (now: number) => {
       const visibleBounds = camera.current;
+      const visibleWidth = Math.max(1, visibleBounds.right - visibleBounds.left);
+      const centralCoreLeft = visibleBounds.left + visibleWidth * 0.25;
+      const centralCoreRight = visibleBounds.left + visibleWidth * 0.75;
       const visibleTomatoBodies = [...activeBodies, ...sleepingBodies].filter((body) =>
         body.bounds.max.x >= visibleBounds.left
         && body.bounds.min.x <= visibleBounds.right
@@ -912,6 +1208,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
 
       stationaryBodies.forEach((body) => {
         if (body.isStatic
+          || body.position.x < centralCoreLeft
+          || body.position.x > centralCoreRight
           || body.bounds.min.x < leftEdge + DEEP_CORE_INSET
           || body.bounds.max.x > rightEdge - DEEP_CORE_INSET
           || body.bounds.min.y < topEdge + DEEP_CORE_INSET
@@ -999,6 +1297,21 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       );
     };
 
+    const drawCloudFloor = () => {
+      if (!cloudFloorBody || cloudFloorParts.length === 0) return;
+      context.save();
+      context.globalAlpha = breakModeRef.current ? 0.92 : 0.78;
+      context.fillStyle = breakModeRef.current ? "#ffffff" : "#e2e8f0";
+      for (const puff of cloudFloorParts) {
+        const radius = puff.circleRadius ?? 0;
+        if (radius <= 0) continue;
+        context.beginPath();
+        context.arc(puff.position.x, puff.position.y, radius, 0, Math.PI * 2);
+        context.fill();
+      }
+      context.restore();
+    };
+
     const updateTomatoTransitions = (frameDelta: number) => {
       for (const body of [...ripeningBodies]) {
         const tomato = body.plugin.tomato as TomatoBodyData;
@@ -1006,6 +1319,16 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         sleepingCacheDirty = true;
         forceCacheRefresh = true;
         if (tomato.ripeness >= 1 || tomato.hasBurst) ripeningBodies.delete(body);
+      }
+      const currentTime = Date.now();
+      const infectedBodies = new Set([...activeBodies, ...sleepingBodies, ...staticCoreBodies]);
+      for (const body of infectedBodies) {
+        if (body.label !== "tomato") continue;
+        const tomato = body.plugin.tomato as TomatoBodyData | undefined;
+        if (!tomato || !tomato.isInfected || tomato.hasBurst) continue;
+        const safeBurstAt = Number.isFinite(tomato.burstAt) ? Math.max(0, tomato.burstAt) : 0;
+        tomato.burstAt = safeBurstAt;
+        if (safeBurstAt > 0 && currentTime >= safeBurstAt) burstTomato(body);
       }
       const pressureDecay = Math.pow(0.94, frameDelta / (1000 / 60));
       for (const body of [...pressuredBodies]) {
@@ -1038,6 +1361,23 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         context.fill();
       }
       context.globalAlpha = 1;
+    };
+
+    const updateAndDrawContrailParticles = (frameDelta: number) => {
+      for (let index = contrailParticles.length - 1; index >= 0; index--) {
+        const particle = contrailParticles[index];
+        particle.life -= frameDelta;
+        particle.alpha = Math.max(0, particle.alpha - frameDelta / particle.maxLife * 0.28);
+        if (particle.life <= 0 || particle.alpha <= 0) {
+          contrailParticles.splice(index, 1);
+          continue;
+        }
+        particle.radius += frameDelta * 0.0035 / Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
+        context.fillStyle = `rgba(255, 255, 255, ${particle.alpha})`;
+        context.beginPath();
+        context.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+        context.fill();
+      }
     };
 
     const rebuildTerrainBody = () => {
@@ -1104,6 +1444,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         sleepingBodies.delete(body);
         pendingSleeping.delete(body);
         staticCoreBodies.delete(body);
+        lowerStaticBodies.delete(body);
         ripeningBodies.delete(body);
         pressuredBodies.delete(body);
         if (cachedSleeping.delete(body)) removedCachedBody = true;
@@ -1288,6 +1629,24 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       for (const lightX of [-0.55, 0, 0.55]) {
         context.fillRect(lightX * size - size * 0.08, size * 0.02, size * 0.16, size * 0.12);
       }
+      context.restore();
+    };
+
+    const alienSvgPathString = "M26.75 22.25H27.5C27.9125 22.25 28.25 22.5875 28.25 23V24.0725C28.25 24.305 28.055 24.5 27.8225 24.5H26.75C26.3375 24.5 26 24.1625 26 23.75V23C26 22.5875 26.3375 22.25 26.75 22.25ZM28.9925 41.7725H29.75C30.1625 41.7725 30.5 41.435 30.5 41.0225V40.2725C30.5 39.86 30.1625 39.5225 29.75 39.5225H27.9275C27.695 39.5225 27.5 39.7175 27.5 39.95V40.28C27.5 41.105 28.1675 41.7725 28.9925 41.7725ZM33.5 40.2725V41.0225C33.5 41.435 33.8375 41.7725 34.25 41.7725H35.0225C35.84 41.7725 36.5 41.1125 36.5 40.295V39.95C36.5 39.8366 36.455 39.7279 36.3748 39.6477C36.2946 39.5675 36.1859 39.5225 36.0725 39.5225H34.25C33.8375 39.5225 33.5 39.86 33.5 40.2725ZM38 23.75V23C38 22.5875 37.6625 22.25 37.25 22.25H36.5C36.0875 22.25 35.75 22.5875 35.75 23V24.0725C35.75 24.305 35.945 24.5 36.1775 24.5H37.25C37.6625 24.5 38 24.1625 38 23.75ZM41 28.2725C41 27.86 41.3375 27.5225 41.75 27.5225C42.1625 27.5225 42.5 27.86 42.5 28.2725V31.2725C42.5 31.685 42.1625 32.0225 41.75 32.0225H41.4275C41.3141 32.0225 41.2054 32.0675 41.1252 32.1477C41.045 32.2279 41 32.3366 41 32.45V32.795C41 33.6125 40.34 34.2725 39.5225 34.2725H39.1775C39.0641 34.2725 38.9554 34.3175 38.8752 34.3977C38.795 34.4779 38.75 34.5866 38.75 34.7V38.03C38.75 38.855 38.0825 39.5225 37.2575 39.5225H36.9275C36.8141 39.5225 36.7054 39.4775 36.6252 39.3973C36.545 39.3171 36.5 39.2084 36.5 39.095V36.95C36.5 36.8366 36.455 36.7279 36.3748 36.6477C36.2946 36.5675 36.1859 36.5225 36.0725 36.5225H27.9275C27.8141 36.5225 27.7054 36.5675 27.6252 36.6477C27.545 36.7279 27.5 36.8366 27.5 36.95V39.095C27.5 39.3275 27.3125 39.5225 27.0725 39.5225H26.75C25.925 39.5225 25.25 38.8475 25.25 38.0225V34.7C25.25 34.4675 25.055 34.2725 24.8225 34.2725H24.5C23.675 34.2725 23 33.5975 23 32.7725V32.45C23 32.2175 22.805 32.0225 22.5725 32.0225H22.25C21.8375 32.0225 21.5 31.685 21.5 31.2725V28.2725C21.5 27.86 21.8375 27.5225 22.25 27.5225H22.2725C22.685 27.5225 23.0225 27.86 23.0225 28.2725V29.345C23.0225 29.585 23.21 29.7725 23.45 29.7725L24.8 29.765C25.025 29.7575 25.22 29.6 25.25 29.3825C25.43 28.025 26.5325 26.9675 27.8975 26.795C28.1 26.7725 28.25 26.585 28.25 26.375V24.9275C28.25 24.695 28.445 24.5 28.685 24.5H28.91C29.7875 24.5 30.5 25.2125 30.5 26.09V26.345C30.5 26.585 30.695 26.7725 30.9275 26.7725H33.0725C33.305 26.7725 33.5 26.585 33.5 26.345V26.0525C33.5 25.1975 34.1975 24.5 35.0525 24.5H35.3225C35.555 24.5 35.75 24.695 35.75 24.9275V26.375C35.75 26.585 35.9 26.7725 36.1025 26.795C37.4675 26.96 38.555 28.025 38.7275 29.39C38.7575 29.615 38.9525 29.7725 39.1775 29.7725H40.5725C40.805 29.7725 41 29.585 41 29.345V28.2725ZM28.25 32.75C28.3496 32.75 28.4483 32.7302 28.5402 32.6916C28.6321 32.6531 28.7153 32.5967 28.7852 32.5256C28.855 32.4545 28.9099 32.3702 28.9468 32.2777C28.9837 32.1851 29.0018 32.0861 29 31.9865V30.5135C29 30.0897 28.6655 29.75 28.25 29.75C27.8337 29.75 27.5 30.0897 27.5 30.5135V31.9865C27.5 32.4103 27.8337 32.75 28.25 32.75ZM35 31.9865C35 32.4103 35.3337 32.75 35.75 32.75C36.1663 32.75 36.5 32.4028 36.5 31.9865V30.5135C36.5 30.0897 36.1663 29.75 35.75 29.75C35.3337 29.75 35 30.0897 35 30.5135V31.9865Z";
+    const alienPath = new Path2D(alienSvgPathString);
+
+    const drawAlien = (x: number, y: number, size: number, direction: 1 | -1) => {
+      context.save();
+      context.translate(x, y);
+      context.scale(direction, 1);
+      const alienScale = size / 64;
+      context.scale(alienScale, alienScale);
+      context.translate(-32, -32);
+      context.globalAlpha = breakModeRef.current ? 0.48 : 0.62;
+      context.fillStyle = breakModeRef.current ? "#312e81" : "#a7f3d0";
+      context.shadowColor = breakModeRef.current ? "rgba(99, 102, 241, 0.36)" : "rgba(52, 211, 153, 0.42)";
+      context.shadowBlur = 10;
+      context.fill(alienPath);
       context.restore();
     };
 
@@ -1500,13 +1859,27 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       context.strokeStyle = isBreak ? "rgba(255, 255, 255, 0.46)" : "rgba(186, 230, 253, 0.20)";
       context.lineWidth = Math.max(18, height * 0.035);
       context.lineCap = "round";
+      const windLoopWidth = width * 1.35;
       for (let streak = 0; streak < 4; streak++) {
-        const drift = Math.sin(now * 0.00012 + streak * 1.7) * width * 0.04;
         const y = height * (0.18 + streak * 0.19);
-        context.beginPath();
-        context.moveTo(width * (0.04 + streak * 0.09) + drift, y);
-        context.bezierCurveTo(width * 0.28, y - 18, width * 0.46, y + 16, width * (0.58 + streak * 0.08), y - 4);
-        context.stroke();
+        const baseX = width * (0.04 + streak * 0.09);
+        const wrappedX = ((baseX + windOffset + streak * width * 0.17) % windLoopWidth + windLoopWidth)
+          % windLoopWidth - width * 0.28;
+        const lineLength = width * (0.54 + streak * 0.04);
+        for (let copy = -1; copy <= 1; copy++) {
+          const x = wrappedX + copy * windLoopWidth;
+          context.beginPath();
+          context.moveTo(x, y);
+          context.bezierCurveTo(
+            x + lineLength * 0.38,
+            y - 18,
+            x + lineLength * 0.72,
+            y + 16,
+            x + lineLength,
+            y - 4,
+          );
+          context.stroke();
+        }
       }
       context.restore();
     };
@@ -1516,39 +1889,101 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       if (visibility <= 0) return;
       context.save();
       context.globalAlpha = visibility;
-      for (let star = 0; star < 76; star++) {
-        const x = ((star * 137 + 41) % 997) / 997 * width;
-        const y = ((star * 223 + 89) % 991) / 991 * height;
-        const twinkle = 0.42 + (Math.sin(now * (0.0012 + star % 5 * 0.00017) + star) + 1) * 0.25;
-        context.globalAlpha = visibility * twinkle;
-        context.fillStyle = isBreak ? "rgba(67, 56, 202, 0.82)" : "rgba(255, 255, 255, 0.94)";
+      const parallaxFactors = [0.02, 0.08, 0.18] as const;
+      const horizontalMargin = 8;
+      const horizontalLoop = Math.max(1, width + horizontalMargin * 2);
+      const verticalLoop = Math.max(1, height + horizontalMargin * 2);
+      const altitudeTravel = Math.max(0, altitude - SPACE_EVENT_ALTITUDE);
+      context.fillStyle = isBreak ? "#4338ca" : "#ffffff";
+      for (const star of starParticles) {
+        const rawX = star.normalizedX * width - now * star.horizontalSpeed;
+        const x = ((rawX + horizontalMargin) % horizontalLoop + horizontalLoop) % horizontalLoop - horizontalMargin;
+        const rawY = star.normalizedY * height + altitudeTravel * parallaxFactors[star.layer];
+        const y = ((rawY + horizontalMargin) % verticalLoop + verticalLoop) % verticalLoop - horizontalMargin;
+        const twinkle = 0.78 + Math.sin(now * star.twinkleSpeed + star.phase) * 0.22;
+        context.globalAlpha = visibility * star.alpha * twinkle;
         context.beginPath();
-        context.arc(x, y, 0.75 + star % 4 * 0.52, 0, Math.PI * 2);
+        context.arc(x, y, star.radius, 0, Math.PI * 2);
         context.fill();
       }
-      context.globalAlpha = visibility * (isBreak ? 0.22 : 0.30);
-      context.lineCap = "round";
-      context.lineWidth = Math.max(34, height * 0.075);
-      const aurora = context.createLinearGradient(0, 0, width, 0);
-      aurora.addColorStop(0, "rgba(34, 211, 238, 0)");
-      aurora.addColorStop(0.24, isBreak ? "rgba(16, 185, 129, 0.48)" : "rgba(45, 212, 191, 0.54)");
-      aurora.addColorStop(0.56, isBreak ? "rgba(99, 102, 241, 0.52)" : "rgba(56, 189, 248, 0.48)");
-      aurora.addColorStop(0.82, isBreak ? "rgba(217, 70, 239, 0.42)" : "rgba(168, 85, 247, 0.46)");
-      aurora.addColorStop(1, "rgba(168, 85, 247, 0)");
-      context.strokeStyle = aurora;
-      context.shadowColor = isBreak ? "rgba(129, 140, 248, 0.28)" : "rgba(45, 212, 191, 0.30)";
-      context.shadowBlur = 24;
-      context.beginPath();
-      context.moveTo(-width * 0.08, height * 0.28);
-      context.bezierCurveTo(
-        width * 0.20,
-        height * (0.12 + Math.sin(now * 0.00016) * 0.035),
-        width * 0.50,
-        height * (0.44 + Math.cos(now * 0.00013) * 0.04),
-        width * 1.08,
-        height * 0.20,
-      );
-      context.stroke();
+      const activeShootingStar = shootingStarEvent;
+      if (activeShootingStar) {
+        const elapsed = ufoEventTime - activeShootingStar.startedAt;
+        const progress = Math.min(1, Math.max(0, elapsed / activeShootingStar.duration));
+        const headX = width * (
+          activeShootingStar.startXRatio
+          + activeShootingStar.direction * activeShootingStar.travelXRatio * progress
+        );
+        const headY = height * (
+          activeShootingStar.startYRatio
+          + activeShootingStar.travelYRatio * progress
+        );
+        const tailLengthX = width * 0.12 * activeShootingStar.direction;
+        const tailLengthY = height * 0.075;
+        const tailX = headX - tailLengthX;
+        const tailY = headY - tailLengthY;
+        const fadeIn = Math.min(1, progress / 0.12);
+        const fadeOut = Math.max(0, 1 - progress);
+        const shootingStarAlpha = visibility * fadeIn * fadeOut;
+        const trailGradient = context.createLinearGradient(tailX, tailY, headX, headY);
+        trailGradient.addColorStop(0, "rgba(255, 255, 255, 0)");
+        trailGradient.addColorStop(0.72, `rgba(226, 232, 240, ${shootingStarAlpha * 0.55})`);
+        trailGradient.addColorStop(1, `rgba(255, 255, 255, ${shootingStarAlpha})`);
+        context.save();
+        context.globalAlpha = 1;
+        context.strokeStyle = trailGradient;
+        context.lineWidth = 1.4 + shootingStarAlpha * 1.2;
+        context.lineCap = "round";
+        context.beginPath();
+        context.moveTo(tailX, tailY);
+        context.lineTo(headX, headY);
+        context.stroke();
+        context.fillStyle = `rgba(255, 255, 255, ${shootingStarAlpha})`;
+        context.beginPath();
+        context.arc(headX, headY, 1.2 + shootingStarAlpha * 1.1, 0, Math.PI * 2);
+        context.fill();
+        context.restore();
+      }
+      const activeAurora = auroraEvent;
+      if (activeAurora) {
+        const elapsed = ufoEventTime - activeAurora.startedAt;
+        const fadeOutStart = activeAurora.fadeInDuration + activeAurora.holdDuration;
+        const lifecycleAlpha = elapsed < activeAurora.fadeInDuration
+          ? Math.max(0, elapsed / activeAurora.fadeInDuration)
+          : elapsed < fadeOutStart
+            ? 1
+            : Math.max(0, 1 - (elapsed - fadeOutStart) / activeAurora.fadeOutDuration);
+        const revealProgress = Math.min(1, Math.max(0, elapsed / activeAurora.fadeInDuration));
+        context.save();
+        context.beginPath();
+        if (activeAurora.direction === 1) context.rect(0, 0, width * revealProgress, height);
+        else context.rect(width * (1 - revealProgress), 0, width * revealProgress, height);
+        context.clip();
+        context.globalAlpha = visibility * lifecycleAlpha * (isBreak ? 0.22 : 0.30);
+        context.lineCap = "round";
+        context.lineWidth = Math.max(34, height * 0.075);
+        const aurora = context.createLinearGradient(0, 0, width, 0);
+        aurora.addColorStop(0, "rgba(34, 211, 238, 0)");
+        aurora.addColorStop(0.24, isBreak ? "rgba(16, 185, 129, 0.48)" : "rgba(45, 212, 191, 0.54)");
+        aurora.addColorStop(0.56, isBreak ? "rgba(99, 102, 241, 0.52)" : "rgba(56, 189, 248, 0.48)");
+        aurora.addColorStop(0.82, isBreak ? "rgba(217, 70, 239, 0.42)" : "rgba(168, 85, 247, 0.46)");
+        aurora.addColorStop(1, "rgba(168, 85, 247, 0)");
+        context.strokeStyle = aurora;
+        context.shadowColor = isBreak ? "rgba(129, 140, 248, 0.28)" : "rgba(45, 212, 191, 0.30)";
+        context.shadowBlur = 24;
+        context.beginPath();
+        context.moveTo(-width * 0.08, height * 0.28);
+        context.bezierCurveTo(
+          width * 0.20,
+          height * (0.12 + Math.sin(now * 0.00016 + activeAurora.phase) * 0.035),
+          width * 0.50,
+          height * (0.44 + Math.cos(now * 0.00013 + activeAurora.phase) * 0.04),
+          width * 1.08,
+          height * 0.20,
+        );
+        context.stroke();
+        context.restore();
+      }
       context.restore();
     };
 
@@ -1589,18 +2024,41 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       lastCacheRefresh = now;
     };
 
-    resize(); createBoundaries();
-    const total = counts.normal + counts.gold;
-    const visible = Math.min(total, CONFIG.maxRestoredBodies);
-    const goldVisible = total ? Math.min(counts.gold, Math.round(visible * counts.gold / total)) : 0;
-    for (let i = 0; i < visible; i++) createTomato(i < goldVisible, true);
+    resize();
+    const resumeFromAltitude = initialMaxAltitude > 0;
+    const savedCamera = resumeFromAltitude ? readSavedCameraState() : null;
+    const restartCameraScale = 0.48;
+    cameraScaleLocked = resumeFromAltitude;
+    if (resumeFromAltitude) {
+      currentScale.current = restartCameraScale;
+      targetScale.current = restartCameraScale;
+      camera.current = getBounds(restartCameraScale, currentOffsetY.current);
+    }
+    if (savedCamera) {
+      currentOffsetY.current = savedCamera.offsetY;
+      targetOffsetY.current = savedCamera.offsetY;
+      camera.current = getBounds(restartCameraScale, savedCamera.offsetY);
+    } else if (resumeFromAltitude) {
+      const restoredOffsetY = initialMaxAltitude * 2;
+      currentOffsetY.current = restoredOffsetY;
+      targetOffsetY.current = restoredOffsetY;
+      camera.current = getBounds(restartCameraScale, restoredOffsetY);
+    }
+    createBoundaries();
+    if (resumeFromAltitude) {
+      createCloudFloor(camera.current);
+    }
+    const persistenceTimer = window.setInterval(saveCameraState, 10_000);
+    const handleBeforeUnload = () => saveCameraState();
+    window.addEventListener("beforeunload", handleBeforeUnload);
 
     const render = (now: number) => {
       const rawDelta = Math.max(0, now - previousFrameTime);
-      const safeDelta = Math.min(rawDelta, 33.33);
+      const safeDelta = Math.min(rawDelta, 16.666);
       previousFrameTime = now;
       const frameDelta = pageHidden ? 0 : safeDelta;
       ufoEventTime += frameDelta;
+      windOffset = (windOffset + frameDelta * 0.018) % Math.max(1, width * 1.35);
       const ufoNow = ufoEventTime;
       Engine.update(engine, safeDelta);
       if (pageHidden) {
@@ -1642,15 +2100,70 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           includeBodyBounds(body);
         }
       });
-      sleepingBodies.forEach(includeBodyBounds);
+      sleepingBodies.forEach((body) => {
+        includeBodyBounds(body);
+      });
       highestPoint = Math.min(highestPoint, archivedHighestPoint);
       const altitude = Number.isFinite(highestPoint)
         ? Math.max(0, Math.floor((height - (highestPoint + 25)) * 0.5))
-        : 0;
+        : currentAltitude;
       currentAltitude = altitude;
       if (altitude !== lastReportedAltitude) {
         lastReportedAltitude = altitude;
         altitudeChangeRef.current(altitude);
+      }
+      if (altitude < AURORA_EVENT_ALTITUDE) {
+        auroraEvent = null;
+        nextAuroraCheckAt = Math.max(nextAuroraCheckAt, ufoNow + AURORA_CHECK_INTERVAL_MS);
+      } else {
+        if (!pageHidden && !auroraEvent && ufoNow >= nextAuroraCheckAt) {
+          nextAuroraCheckAt = ufoNow + AURORA_CHECK_INTERVAL_MS;
+          if (Math.random() < AURORA_APPEARANCE_CHANCE) {
+            auroraEvent = {
+              startedAt: ufoNow,
+              fadeInDuration: 4_000,
+              holdDuration: 15_000 + Math.random() * 5_000,
+              fadeOutDuration: 4_000,
+              direction: Math.random() < 0.5 ? 1 : -1,
+              phase: Math.random() * Math.PI * 2,
+            };
+          }
+        }
+        if (auroraEvent) {
+          const auroraDuration = auroraEvent.fadeInDuration
+            + auroraEvent.holdDuration
+            + auroraEvent.fadeOutDuration;
+          if (ufoNow - auroraEvent.startedAt >= auroraDuration) auroraEvent = null;
+        }
+      }
+      if (altitude < SHOOTING_STAR_EVENT_ALTITUDE) {
+        shootingStarEvent = null;
+        nextShootingStarCheckAt = Math.max(
+          nextShootingStarCheckAt,
+          ufoNow + SHOOTING_STAR_CHECK_INTERVAL_MS,
+        );
+      } else {
+        if (!pageHidden && !shootingStarEvent && ufoNow >= nextShootingStarCheckAt) {
+          nextShootingStarCheckAt = ufoNow + SHOOTING_STAR_CHECK_INTERVAL_MS;
+          if (Math.random() < SHOOTING_STAR_APPEARANCE_CHANCE) {
+            const direction: 1 | -1 = Math.random() < 0.5 ? 1 : -1;
+            shootingStarEvent = {
+              startedAt: ufoNow,
+              duration: 800 + Math.random() * 700,
+              startXRatio: direction === 1
+                ? 0.08 + Math.random() * 0.22
+                : 0.70 + Math.random() * 0.22,
+              startYRatio: 0.08 + Math.random() * 0.26,
+              direction,
+              travelXRatio: 0.30 + Math.random() * 0.24,
+              travelYRatio: 0.22 + Math.random() * 0.20,
+            };
+          }
+        }
+        if (shootingStarEvent
+          && ufoNow - shootingStarEvent.startedAt >= shootingStarEvent.duration) {
+          shootingStarEvent = null;
+        }
       }
       if (Number.isFinite(leftmostPoint) && Number.isFinite(rightmostPoint) && Number.isFinite(highestPoint)) {
         const centerX = width / 2;
@@ -1673,15 +2186,22 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           const verticalScale = topDistance > 0 ? (height - safeTop) / topDistance : 1;
           const requiredScale = Math.min(1, horizontalScale, verticalScale);
           const nextTargetScale = Math.max(MIN_DYNAMIC_CAMERA_SCALE, requiredScale);
-          targetScale.current = Math.min(targetScale.current, nextTargetScale);
+          if (!cameraScaleLocked) {
+            targetScale.current = Math.min(targetScale.current, nextTargetScale);
+          }
           if (screenTop < safeTop) {
             const requiredOffsetY = topDistance - (height - safeTop) / currentScale.current;
             targetOffsetY.current = Math.max(targetOffsetY.current, requiredOffsetY);
           }
         }
       }
-      currentScale.current += (targetScale.current - currentScale.current) * 0.03;
-      if (Math.abs(targetScale.current - currentScale.current) < 0.0001) currentScale.current = targetScale.current;
+      if (cameraScaleLocked) {
+        currentScale.current = restartCameraScale;
+        targetScale.current = restartCameraScale;
+      } else {
+        currentScale.current += (targetScale.current - currentScale.current) * 0.03;
+        if (Math.abs(targetScale.current - currentScale.current) < 0.0001) currentScale.current = targetScale.current;
+      }
       currentOffsetY.current += (targetOffsetY.current - currentOffsetY.current) * 0.03;
       if (Math.abs(targetOffsetY.current - currentOffsetY.current) < 0.01) currentOffsetY.current = targetOffsetY.current;
       const bounds = getBounds(currentScale.current, currentOffsetY.current);
@@ -1716,6 +2236,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           archivedWorld.height,
         );
       }
+      drawCloudFloor();
       context.restore();
 
       if (cachedSleeping.size && sleepingCanvas.width) {
@@ -1736,6 +2257,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       activeBodies.forEach((body) => drawTomatoBody(body));
       pendingSleeping.forEach((body) => drawTomatoBody(body));
       updateAndDrawJuiceParticles(frameDelta);
+      updateAndDrawContrailParticles(frameDelta);
       for (let index = birdDeliveries.length - 1; index >= 0; index--) {
         const delivery = birdDeliveries[index];
         const progress = Math.min(1, (ufoNow - delivery.startedAt) / delivery.duration);
@@ -1763,6 +2285,21 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           }
         }
         if (delivery.vehicle === "plane") {
+          if (ufoNow >= delivery.nextContrailAt) {
+            const particleScale = Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
+            const tailX = x - delivery.direction * birdSize * 1.42;
+            const tailY = y + birdSize * 0.22;
+            const particleLife = 1_700 + Math.random() * 700;
+            contrailParticles.push({
+              x: tailX - delivery.direction * Math.random() * 5 / particleScale,
+              y: tailY + (Math.random() - 0.5) * 4 / particleScale,
+              radius: (2 + Math.random() * 2) / particleScale,
+              alpha: 0.20 + Math.random() * 0.10,
+              life: particleLife,
+              maxLife: particleLife,
+            });
+            delivery.nextContrailAt = ufoNow + 70 + Math.random() * 35;
+          }
           drawPlane(
             x,
             y,
@@ -1972,9 +2509,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         const dropAreaRight = bounds.right - dropMargin;
 
         while (elapsed >= hoverStart && elapsed < hoverEnd && ufoNow >= ufo.nextDropAt) {
-          const goldenChance = isBonusBreakModeRef.current
-            ? BONUS_BREAK_GOLDEN_CHANCE
-            : activeBuffsRef.current.goldBoost ? SUPPLY_GOLDEN_CHANCE * 2 : SUPPLY_GOLDEN_CHANCE;
+          const goldenChance = getGoldenChance();
           const isGolden = Math.random() < goldenChance;
           const spec: TomatoSpec = {
             golden: isGolden,
@@ -2003,6 +2538,45 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         drawUfo(x, y, ufoSize);
         if (elapsed >= eventEnd) ufoEvents.splice(index, 1);
       }
+
+      if (!pageHidden && altitude >= ALIEN_EVENT_ALTITUDE && ufoNow >= nextAlienCheckAt) {
+        nextAlienCheckAt = ufoNow + ALIEN_CHECK_INTERVAL_MS;
+        if (alienEvents.length === 0 && Math.random() < ALIEN_APPEARANCE_CHANCE) {
+          alienEvents.push({
+            startedAt: ufoNow,
+            duration: 10_000 + Math.random() * 6_000,
+            direction: Math.random() < 0.5 ? 1 : -1,
+            phase1: Math.random() * Math.PI * 2,
+            phase2: Math.random() * Math.PI * 2,
+            speed1: 0.0012 + Math.random() * 0.0012,
+            speed2: 0.0027 + Math.random() * 0.0018,
+            amplitude1: 12 + Math.random() * 12,
+            amplitude2: 5 + Math.random() * 8,
+          });
+        }
+      }
+
+      for (let index = alienEvents.length - 1; index >= 0; index--) {
+        const alien = alienEvents[index];
+        const elapsed = ufoNow - alien.startedAt;
+        const progress = Math.min(1, Math.max(0, elapsed / alien.duration));
+        const routeMargin = 80 / currentScale.current;
+        const fromX = alien.direction === 1 ? bounds.left - routeMargin : bounds.right + routeMargin;
+        const toX = alien.direction === 1 ? bounds.right + routeMargin : bounds.left - routeMargin;
+        const easedProgress = progress < 0.5
+          ? 2 * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        const horizontalDrift = Math.sin(elapsed * 0.00073 + alien.phase2) * 18 / currentScale.current;
+        const x = fromX + (toX - fromX) * easedProgress + horizontalDrift;
+        const minimumScreenY = Math.min(height * 0.26, Math.max(flightScreenY + 22, height * 0.15));
+        const maximumScreenY = Math.max(minimumScreenY + 12, height * 0.32);
+        const verticalDrift = Math.sin(elapsed * alien.speed1 + alien.phase1) * alien.amplitude1
+          + Math.sin(elapsed * alien.speed2 + alien.phase2) * alien.amplitude2;
+        const alienScreenY = Math.min(maximumScreenY, Math.max(minimumScreenY, minimumScreenY + 26 + verticalDrift));
+        const y = bounds.top + alienScreenY / currentScale.current;
+        drawAlien(x, y, 96 / currentScale.current, alien.direction);
+        if (progress >= 1) alienEvents.splice(index, 1);
+      }
       context.restore();
       drawPhysicsDiagnosticOverlay();
       frame = requestAnimationFrame(render);
@@ -2013,14 +2587,19 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     if (toolbar) observer.observe(toolbar);
     frame = requestAnimationFrame(render);
     return () => {
+      saveCameraState();
+      window.clearInterval(persistenceTimer);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
       observer.disconnect();
       cancelAnimationFrame(frame);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       Matter.Events.off(engine, "collisionStart", handleStrongImpact);
+      Matter.Events.off(engine, "beforeUpdate", handleBeforeUpdate);
       Matter.Events.off(engine, "afterUpdate", handleAfterUpdate);
       Engine.clear(engine);
       addRef.current = () => undefined;
       removeGoldenRef.current = () => 0;
+      saveCameraStateRef.current = () => undefined;
     };
     // Counts are read only for initial restoration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
