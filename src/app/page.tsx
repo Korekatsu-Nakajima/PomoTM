@@ -1,60 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Coffee, Disc3, FastForward, Gift, Pause, Pencil, Play, Radio, Repeat, RotateCcw, Sparkles, Store, X, Zap } from "lucide-react";
+import { Coffee, Disc3, FastForward, Gift, Pause, Pencil, Play, Repeat, RotateCcw, Sparkles, Store, Zap } from "lucide-react";
 import { PhysicsCanvas, type PhysicsCanvasHandle } from "@/components/PhysicsCanvas";
+import { AdContainer } from "@/components/AdContainer";
+import { ShopModal } from "@/components/ShopModal";
 import { useTimer } from "@/hooks/useTimer";
+import { saveLocalStorage, useGameStorage } from "@/hooks/useGameStorage";
 import { CONFIG, type TomatoCounts, type TimerMode } from "@/lib/config";
+import type { ActiveBuffs, BuffKey, BuffRemaining, UnlockedItems } from "@/types/game";
+import {
+  BUFF_DURATION_SECONDS,
+  BONUS_BREAK_GOLDEN_CHANCE,
+  INITIAL_BUFF_REMAINING,
+  INITIAL_BUFFS,
+  INITIAL_UNLOCKED_ITEMS,
+  SUPPLY_GOLDEN_CHANCE,
+} from "@/constants/assets";
 
 const button = "inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold transition hover:-translate-y-0.5 disabled:cursor-default disabled:opacity-40 disabled:hover:translate-y-0";
 const quiet = `${button} bg-zinc-800 text-zinc-100 ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700`;
-const PROGRESS_STORAGE_KEY = "tomato-focus:progress:v1";
-const UNLOCKED_ITEMS_STORAGE_KEY = "pomo_unlocked_items";
-const MAX_ALTITUDE_STORAGE_KEY = "pomo_max_altitude";
-const TOTAL_GOLD_TOMATOES_STORAGE_KEY = "pomo_total_gold_tomatoes";
-const UNLOCKED_EVENTS_STORAGE_KEY = "pomo_unlocked_events";
-const MAX_SAFE_SAVED_TOMATOES = 50_000;
-type BuffKey = "doubleDrop" | "balloonBoost" | "goldBoost";
-type ActiveBuffs = Record<BuffKey, boolean>;
-const INITIAL_BUFFS: ActiveBuffs = { doubleDrop: false, balloonBoost: false, goldBoost: false };
-type BuffRemaining = Record<BuffKey, number>;
-const BUFF_DURATION_SECONDS = 30 * 60;
-const SUPPLY_GOLDEN_CHANCE = 0.01;
-const BONUS_BREAK_GOLDEN_CHANCE = 0.10;
-const INITIAL_BUFF_REMAINING: BuffRemaining = { doubleDrop: 0, balloonBoost: 0, goldBoost: 0 };
-type UnlockedItems = { ufo: boolean; bird: boolean; balloon: boolean };
-const INITIAL_UNLOCKED_ITEMS: UnlockedItems = { ufo: false, bird: false, balloon: false };
-
-const saveLocalStorage = (key: string, value: unknown) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    return;
-  }
-};
-
-const readStoredCounts = (): TomatoCounts => {
-  try {
-    const saved = JSON.parse(localStorage.getItem(CONFIG.storageKey) ?? "null");
-    const normal = Number(saved?.normal);
-    const gold = Number(saved?.gold);
-    const valid = Number.isSafeInteger(normal)
-      && Number.isSafeInteger(gold)
-      && normal >= 0
-      && gold >= 0
-      && normal + gold <= MAX_SAFE_SAVED_TOMATOES;
-    if (valid) return { normal, gold };
-    localStorage.removeItem(CONFIG.storageKey);
-  } catch {
-    try { localStorage.removeItem(CONFIG.storageKey); } catch { return { normal: 0, gold: 0 }; }
-  }
-  return { normal: 0, gold: 0 };
-};
-
-const formatBuffTime = (seconds: number) => {
-  const safeSeconds = Math.max(0, Math.floor(seconds));
-  return `${String(Math.floor(safeSeconds / 60)).padStart(2, "0")}:${String(safeSeconds % 60).padStart(2, "0")}`;
-};
 
 export default function Home() {
   const physics = useRef<PhysicsCanvasHandle>(null);
@@ -74,108 +39,23 @@ export default function Home() {
   const [rewardSeconds, setRewardSeconds] = useState(5);
   const [isBonusBreakMode, setIsBonusBreakMode] = useState(false);
   const timerModeRef = useRef<TimerMode>("focus");
-  useEffect(() => {
-    setCounts(readStoredCounts());
-    try {
-      const progress = JSON.parse(localStorage.getItem(PROGRESS_STORAGE_KEY) ?? "null");
-      const storedGoldenTomatoes = Number(progress?.goldenTomatoes);
-      setGoldenTomatoes(Number.isSafeInteger(storedGoldenTomatoes)
-        && storedGoldenTomatoes >= 0
-        && storedGoldenTomatoes <= MAX_SAFE_SAVED_TOMATOES
-        ? storedGoldenTomatoes
-        : 0);
-      const storedDoubleDropActive = Boolean(progress?.activeBuffs?.doubleDrop);
-      const storedBalloonBoostActive = Boolean(progress?.activeBuffs?.balloonBoost);
-      const storedGoldBoostActive = Boolean(progress?.activeBuffs?.goldBoost);
-      const storedDoubleDropRemaining = Number(progress?.buffRemaining?.doubleDrop);
-      const storedBalloonBoostRemaining = Number(progress?.buffRemaining?.balloonBoost);
-      const storedGoldBoostRemaining = Number(progress?.buffRemaining?.goldBoost);
-      const doubleDropRemaining = storedDoubleDropActive
-        ? Number.isSafeInteger(storedDoubleDropRemaining) && storedDoubleDropRemaining >= 0 && storedDoubleDropRemaining <= BUFF_DURATION_SECONDS
-          ? storedDoubleDropRemaining
-          : BUFF_DURATION_SECONDS
-        : 0;
-      const balloonBoostRemaining = storedBalloonBoostActive
-        ? Number.isSafeInteger(storedBalloonBoostRemaining) && storedBalloonBoostRemaining >= 0 && storedBalloonBoostRemaining <= BUFF_DURATION_SECONDS
-          ? storedBalloonBoostRemaining
-          : BUFF_DURATION_SECONDS
-        : 0;
-      const goldBoostRemaining = storedGoldBoostActive
-        ? Number.isSafeInteger(storedGoldBoostRemaining) && storedGoldBoostRemaining >= 0 && storedGoldBoostRemaining <= BUFF_DURATION_SECONDS
-          ? storedGoldBoostRemaining
-          : BUFF_DURATION_SECONDS
-        : 0;
-      setActiveBuffs({
-        doubleDrop: storedDoubleDropActive && doubleDropRemaining > 0,
-        balloonBoost: storedBalloonBoostActive && balloonBoostRemaining > 0,
-        goldBoost: storedGoldBoostActive && goldBoostRemaining > 0,
-      });
-      setBuffRemaining({
-        doubleDrop: doubleDropRemaining,
-        balloonBoost: balloonBoostRemaining,
-        goldBoost: goldBoostRemaining,
-      });
-      setUnlockedItems({
-        ufo: progress?.unlockedItems?.ufo === true,
-        bird: progress?.unlockedItems?.bird === true,
-        balloon: progress?.unlockedItems?.balloon === true,
-      });
-      try {
-        const storedUnlockedItems = JSON.parse(localStorage.getItem(UNLOCKED_ITEMS_STORAGE_KEY) ?? "null");
-        if (storedUnlockedItems && typeof storedUnlockedItems === "object") {
-          setUnlockedItems((current) => ({ ...current, ufo: storedUnlockedItems.ufo === true }));
-        }
-      } catch {
-        localStorage.removeItem(UNLOCKED_ITEMS_STORAGE_KEY);
-      }
-      const storedMaxAltitude = Number(localStorage.getItem(MAX_ALTITUDE_STORAGE_KEY));
-      setMaxAltitude(Number.isFinite(storedMaxAltitude) && storedMaxAltitude >= 0 ? storedMaxAltitude : 0);
-      const storedTotalGoldTomatoes = Number(localStorage.getItem(TOTAL_GOLD_TOMATOES_STORAGE_KEY));
-      setTotalGoldTomatoes(Number.isSafeInteger(storedTotalGoldTomatoes) && storedTotalGoldTomatoes >= 0
-        ? storedTotalGoldTomatoes
-        : 0);
-      try {
-        const storedUnlockedEvents = JSON.parse(localStorage.getItem(UNLOCKED_EVENTS_STORAGE_KEY) ?? "null");
-        if (storedUnlockedEvents && typeof storedUnlockedEvents === "object") {
-          setUnlockedItems((current) => ({
-            ...current,
-            ufo: storedUnlockedEvents.ufo === true || current.ufo,
-            bird: storedUnlockedEvents.bird === true || current.bird,
-            balloon: storedUnlockedEvents.balloon === true || current.balloon,
-          }));
-        }
-      } catch {
-        localStorage.removeItem(UNLOCKED_EVENTS_STORAGE_KEY);
-      }
-    } catch {
-      setGoldenTomatoes(0);
-      setActiveBuffs(INITIAL_BUFFS);
-      setBuffRemaining(INITIAL_BUFF_REMAINING);
-      setUnlockedItems(INITIAL_UNLOCKED_ITEMS);
-      try { localStorage.removeItem(PROGRESS_STORAGE_KEY); } catch { /* Storage is unavailable. */ }
-    }
-    setHydrated(true);
-  }, []);
-  useEffect(() => {
-    if (!hydrated) return;
-    saveLocalStorage(PROGRESS_STORAGE_KEY, { goldenTomatoes, activeBuffs, buffRemaining, unlockedItems });
-  }, [activeBuffs, buffRemaining, goldenTomatoes, hydrated, unlockedItems]);
-  useEffect(() => {
-    if (!hydrated) return;
-    saveLocalStorage(UNLOCKED_ITEMS_STORAGE_KEY, { ufo: unlockedItems.ufo });
-  }, [hydrated, unlockedItems.ufo]);
-  useEffect(() => {
-    if (!hydrated) return;
-    saveLocalStorage(MAX_ALTITUDE_STORAGE_KEY, maxAltitude);
-  }, [hydrated, maxAltitude]);
-  useEffect(() => {
-    if (!hydrated) return;
-    saveLocalStorage(TOTAL_GOLD_TOMATOES_STORAGE_KEY, totalGoldTomatoes);
-  }, [hydrated, totalGoldTomatoes]);
-  useEffect(() => {
-    if (!hydrated) return;
-    saveLocalStorage(UNLOCKED_EVENTS_STORAGE_KEY, unlockedItems);
-  }, [hydrated, unlockedItems]);
+  useGameStorage({
+    setCounts,
+    goldenTomatoes,
+    setGoldenTomatoes,
+    activeBuffs,
+    setActiveBuffs,
+    buffRemaining,
+    setBuffRemaining,
+    unlockedItems,
+    setUnlockedItems,
+    hydrated,
+    setHydrated,
+    maxAltitude,
+    setMaxAltitude,
+    totalGoldTomatoes,
+    setTotalGoldTomatoes,
+  });
   const awardTomato = useCallback(() => {
     if (document.hidden) return;
     if (debugUfoMode) return;
@@ -224,6 +104,18 @@ export default function Home() {
     physics.current?.removeGolden(cost);
     setGoldenTomatoes((current) => current - cost);
     setUnlockedItems((current) => ({ ...current, ufo: true }));
+    setCounts((current) => {
+      const next = { ...current, gold: Math.max(0, current.gold - cost) };
+      saveLocalStorage(CONFIG.storageKey, next);
+      return next;
+    });
+  };
+  const unlockOctopus = () => {
+    const cost = 1000;
+    if (unlockedItems.octopus || goldenTomatoes < cost) return;
+    physics.current?.removeGolden(cost);
+    setGoldenTomatoes((current) => current - cost);
+    setUnlockedItems((current) => ({ ...current, octopus: true }));
     setCounts((current) => {
       const next = { ...current, gold: Math.max(0, current.gold - cost) };
       saveLocalStorage(CONFIG.storageKey, next);
@@ -355,7 +247,7 @@ export default function Home() {
       <div className="flex h-full w-full max-w-[1380px] items-center justify-center gap-4 overflow-hidden">
         <section className={`relative isolate flex h-full max-h-[100dvh] w-full max-w-5xl flex-col justify-between overflow-hidden rounded-2xl border shadow-2xl transition-colors duration-700 ${isBreak ? "border-neutral-300 bg-neutral-50 shadow-neutral-400/30" : "border-neutral-800 bg-neutral-900 shadow-black/60"}`}>
           <div className={`pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 select-none whitespace-nowrap text-[clamp(5rem,20vw,14rem)] font-black leading-none tracking-[-0.07em] tabular-nums transition-colors duration-700 ${isBreak ? "text-neutral-900" : "text-white/90"}`}>{time}</div>
-          <AdBannerSlot
+          <AdContainer
             variant="mobile"
             className="absolute inset-x-2 top-[4.5rem] z-20 h-[50px] md:hidden"
           />
@@ -368,6 +260,7 @@ export default function Home() {
               onGoldenTomatoDrop={recordGoldenTomatoDrop}
               activeBuffs={activeBuffs}
               isUfoUnlocked={unlockedItems.ufo}
+              isOctopusUnlocked={unlockedItems.octopus}
               debugUfoMode={debugUfoMode}
               isBonusBreakMode={isBonusBreakMode}
               timerMode={timer.mode}
@@ -421,33 +314,20 @@ export default function Home() {
             </div>
           </div>
 
-          {shopOpen && (
-            <div className={`absolute inset-0 z-50 grid place-items-center p-4 backdrop-blur-sm ${isBreak ? "bg-neutral-200/75" : "bg-neutral-950/75"}`} role="presentation" onMouseDown={() => setShopOpen(false)}>
-              <section className={`w-full max-w-lg rounded-3xl border p-6 shadow-2xl ${isBreak ? "border-neutral-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900"}`} role="dialog" aria-modal="true" aria-labelledby="shop-title" onMouseDown={(event) => event.stopPropagation()}>
-                <header className="mb-6 flex items-center justify-between gap-4">
-                  <div>
-                    <h2 id="shop-title" className="flex items-center gap-2 text-xl font-black"><Store className={isBreak ? "text-emerald-500" : "text-red-500"} />アイテム交換所</h2>
-                    <p className={`mt-1 text-sm ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>金トマトをアイテムと交換できます</p>
-                  </div>
-                  <button className={quietClass} aria-label="ショップを閉じる" onClick={() => setShopOpen(false)}><X size={18} /></button>
-                </header>
-                <div className="mb-5 flex flex-wrap items-center gap-2">
-                  <div className={`inline-flex items-center gap-2 rounded-full border border-amber-400/30 px-4 py-2 font-bold ${isBreak ? "bg-neutral-100 text-amber-700" : "bg-neutral-950 text-amber-300"}`}><Sparkles size={18} />所持 × {goldenTomatoes}</div>
-                  {unlockedItems.ufo ? (
-                    <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/70 bg-emerald-400/15 px-4 py-2 text-xs font-black tracking-wide text-emerald-300"><Radio size={17} />UFO UNLOCKED</span>
-                  ) : (
-                    <button className={`${button} bg-sky-400 text-zinc-950`} disabled={goldenTomatoes < 100} onClick={unlockUfo}><Radio size={17} />UFO解除 <Sparkles size={15} />× 100</button>
-                  )}
-                </div>
-                <div className="grid gap-3">
-                  <ShopItem title="ダブルドロップ" description="1回の供給量を増やすためのアイテムです。（有効時間: 30分）" cost={3} active={activeBuffs.doubleDrop} remainingSeconds={buffRemaining.doubleDrop} affordable={goldenTomatoes >= 3} onActivate={() => activateBuff("doubleDrop", 3)} light={isBreak} />
-                  <ShopItem title="気球ブースト" description="気球イベントを強化するためのアイテムです。（有効時間: 30分）" cost={5} active={activeBuffs.balloonBoost} remainingSeconds={buffRemaining.balloonBoost} affordable={goldenTomatoes >= 5} onActivate={() => activateBuff("balloonBoost", 5)} light={isBreak} />
-                  <ShopItem title="ゴールドブースト" description="金トマトの出現確率をアップさせるアイテムです。（有効時間: 30分）" cost={10} active={activeBuffs.goldBoost} remainingSeconds={buffRemaining.goldBoost} affordable={goldenTomatoes >= 10} onActivate={() => activateBuff("goldBoost", 10)} light={isBreak} />
-                </div>
-                <p className={`mt-4 text-xs opacity-75 ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>※休憩中はアイテムの減算は行われません。</p>
-              </section>
-            </div>
-          )}
+          <ShopModal
+            isOpen={shopOpen}
+            onClose={() => setShopOpen(false)}
+            goldTomatoCount={goldenTomatoes}
+            isUfoUnlocked={unlockedItems.ufo}
+            isOctopusUnlocked={unlockedItems.octopus}
+            currentAltitude={altitude}
+            activeBuffs={activeBuffs}
+            buffRemaining={buffRemaining}
+            onPurchaseItem={activateBuff}
+            onUnlockUfo={unlockUfo}
+            onUnlockOctopus={unlockOctopus}
+            isBreak={isBreak}
+          />
           {rewardOpen && (
             <div className={`absolute inset-0 z-[60] grid place-items-center p-4 backdrop-blur-md ${isBreak ? "bg-neutral-200/85" : "bg-neutral-950/85"}`}>
               <section className={`w-full max-w-md rounded-3xl border p-6 text-center shadow-2xl ${isBreak ? "border-emerald-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900 text-white"}`} role="dialog" aria-modal="true" aria-labelledby="reward-title">
@@ -476,53 +356,11 @@ export default function Home() {
             </div>
           )}
         </section>
-        <AdBannerSlot
+        <AdContainer
           variant="desktop"
           className="hidden h-[min(600px,calc(100dvh-2rem))] w-[300px] shrink-0 md:flex xl:w-[336px]"
         />
       </div>
     </main>
-  );
-}
-
-function ShopItem({ title, description, cost, active, remainingSeconds, affordable, onActivate, light }: {
-  title: string; description: string; cost: number; active: boolean; remainingSeconds: number; affordable: boolean; onActivate: () => void; light: boolean;
-}) {
-  return (
-    <article className={`flex items-center justify-between gap-4 rounded-2xl border p-4 ${light ? "border-neutral-300 bg-neutral-100" : "border-neutral-800 bg-neutral-950/70"}`}>
-      <div>
-        <h3 className="font-bold">{title}</h3>
-        <p className={`mt-1 text-sm ${light ? "text-neutral-600" : "text-neutral-400"}`}>{description}</p>
-      </div>
-      {active ? (
-        <div className="shrink-0 text-center">
-          <span className="block rounded-full border border-emerald-400/70 bg-emerald-400/15 px-3 py-2 text-xs font-black tracking-wide text-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.24)]">ACTIVE</span>
-          <span className="mt-1 block text-[11px] font-bold tabular-nums text-emerald-300">{formatBuffTime(remainingSeconds)}</span>
-        </div>
-      ) : (
-        <button className={`${button} shrink-0 ${light ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} disabled={!affordable} onClick={onActivate}>交換 <Sparkles size={15} />× {cost}</button>
-      )}
-    </article>
-  );
-}
-
-function AdBannerSlot({ variant, className }: { variant: "desktop" | "mobile"; className: string }) {
-  const [refreshCount, setRefreshCount] = useState(0);
-  useEffect(() => {
-    const refreshTimer = window.setInterval(() => {
-      setRefreshCount((current) => current + 1);
-    }, 30_000);
-    return () => window.clearInterval(refreshTimer);
-  }, []);
-  return (
-    <aside
-      className={`${className} items-center justify-center overflow-hidden rounded-2xl border border-dashed border-neutral-500/30 bg-neutral-500/10 text-center backdrop-blur-sm`}
-      aria-label={variant === "desktop" ? "サイドバー広告" : "モバイルバナー広告"}
-      data-ad-refresh={refreshCount}
-    >
-      <div className="px-3 text-[10px] font-bold uppercase tracking-[0.2em] text-current opacity-40">
-        {variant === "desktop" ? "Sidebar Ad · 300 × 600" : "Banner Ad · Responsive"}
-      </div>
-    </aside>
   );
 }

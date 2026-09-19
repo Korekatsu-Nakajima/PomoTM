@@ -2,178 +2,67 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import Matter from "matter-js";
-import { CONFIG, type TomatoCounts } from "@/lib/config";
+import { CONFIG } from "@/lib/config";
+import { loadSavedCameraState, saveSavedCameraState } from "@/hooks/useGameStorage";
+import { createCarrierRenderers, createTomatoRenderer } from "@/utils/canvasRenderer";
+import { clampUnit, getSkyColors, getTomatoDiagnosticType, smoothStep } from "@/utils/gameUtils";
+import { correctDeepTomatoOverlap, sanitizeWorldBodies } from "@/utils/physicsSafety";
+import { createTerrainSegmentParts, getCentralCoreBounds, getVisibleTomatoBodies } from "@/utils/terrainUtils";
+import type {
+  AlienEvent,
+  AuroraEvent,
+  BalloonEvent,
+  BirdDelivery,
+  CameraBounds,
+  ContrailParticle,
+  JuiceParticle,
+  OctopusEvent,
+  PhysicsCanvasHandle,
+  PhysicsCanvasProps,
+  PhysicsDiagnosticAlert,
+  SavedCameraState,
+  ShootingStarEvent,
+  StarParticle,
+  TomatoBodyData,
+  TomatoSpec,
+  UfoEvent,
+} from "@/types/game";
+import {
+  ALIEN_APPEARANCE_CHANCE,
+  ALIEN_CHECK_INTERVAL_MS,
+  ALIEN_EVENT_ALTITUDE,
+  AURORA_APPEARANCE_CHANCE,
+  AURORA_CHECK_INTERVAL_MS,
+  AURORA_EVENT_ALTITUDE,
+  BONUS_BREAK_GIANT_CHANCE,
+  BONUS_BREAK_GOLDEN_CHANCE,
+  DEEP_CORE_BODY_THRESHOLD,
+  DEEP_CORE_EVALUATION_INTERVAL,
+  DEEP_CORE_INSET,
+  HIGH_ALTITUDE_EVENT_INTERVAL_MS,
+  LOW_ALTITUDE_EVENT_INTERVAL_MS,
+  MIN_DYNAMIC_CAMERA_SCALE,
+  OCTOPUS_APPEARANCE_CHANCE,
+  OCTOPUS_CHECK_INTERVAL_MS,
+  PHYSICS_ENGINE_OPTIONS,
+  PISA_TOWER_SVG_PATHS,
+  ROCKET_APPEARANCE_CHANCE,
+  SHOOTING_STAR_APPEARANCE_CHANCE,
+  SHOOTING_STAR_CHECK_INTERVAL_MS,
+  SHOOTING_STAR_EVENT_ALTITUDE,
+  SPACE_EVENT_ALTITUDE,
+  STATUE_OF_LIBERTY_SVG_PATHS,
+  SUPPLY_GIANT_CHANCE,
+  SUPPLY_GOLDEN_CHANCE,
+  TERRAIN_EVALUATION_INTERVAL,
+  TERRAIN_SEGMENT_COUNT,
+  TERRAIN_VIEWPORT_MARGIN,
+  UFO_APPEARANCE_CHANCE,
+} from "@/constants/assets";
 
-export type PhysicsCanvasHandle = {
-  drop: (golden: boolean) => void;
-  removeGolden: (count: number) => number;
-};
-type Props = {
-  counts: TomatoCounts;
-  hydrated: boolean;
-  onBonusTomato: (golden: boolean) => void;
-  onGoldenTomatoDrop: () => void;
-  activeBuffs: { doubleDrop: boolean; balloonBoost: boolean; goldBoost: boolean };
-  isUfoUnlocked: boolean;
-  debugUfoMode?: boolean;
-  isBonusBreakMode?: boolean;
-  timerMode: "focus" | "break";
-  isTimerRunning: boolean;
-  initialMaxAltitude?: number;
-  onAltitudeChange: (altitude: number) => void;
-};
-type CameraBounds = { left: number; right: number; top: number; bottom: number };
-type BirdDelivery = {
-  startedAt: number;
-  duration: number;
-  releaseAt: number;
-  direction: 1 | -1;
-  golden: boolean;
-  radius: number;
-  isSquishy: boolean;
-  released: boolean;
-  vehicle: "bird" | "plane";
-  nextContrailAt: number;
-};
-type TomatoSpec = { golden: boolean; radius: number; isSquishy: boolean };
-type TomatoBodyData = {
-  golden: boolean;
-  radius: number;
-  createdAt: number;
-  hasSettled: boolean;
-  isSquishy: boolean;
-  hasBurst: boolean;
-  pressureFrames: number;
-  pressureLoad: number;
-  ripeness: number;
-  invincibleUntil: number;
-  isDud: boolean;
-  isInfected: boolean;
-  burstAt: number;
-  baseRestitution: number;
-  baseFriction: number;
-};
-type JuiceParticle = {
-  x: number;
-  y: number;
-  velocityX: number;
-  velocityY: number;
-  radius: number;
-  life: number;
-  maxLife: number;
-};
-type ContrailParticle = {
-  x: number;
-  y: number;
-  radius: number;
-  alpha: number;
-  life: number;
-  maxLife: number;
-};
-type BalloonEvent = {
-  startedAt: number;
-  duration: number;
-  direction: 1 | -1;
-  initialGolden: boolean;
-  initialDropPending: boolean;
-  enteredViewport: boolean;
-  nextDropAt: number;
-  vehicle: "balloon" | "rocket";
-};
-type UfoEvent = {
-  startedAt: number;
-  hoverDuration: number;
-  entryDuration: number;
-  exitDuration: number;
-  direction: 1 | -1;
-  nextDropAt: number;
-  hoverPhase: number;
-  horizontalHoverSpeed: number;
-  horizontalPhase2: number;
-  horizontalHoverSpeed2: number;
-  phaseOffset: number;
-  hoverSpeed: number;
-  hoverAmplitude: number;
-  phaseOffset2: number;
-  hoverSpeed2: number;
-  hoverAmplitude2: number;
-  verticalOffset: number;
-  currentYRatio: number;
-  targetYRatio: number;
-  nextYTargetAt: number;
-  yLerpFactor: number;
-};
-type AlienEvent = {
-  startedAt: number;
-  duration: number;
-  direction: 1 | -1;
-  phase1: number;
-  phase2: number;
-  speed1: number;
-  speed2: number;
-  amplitude1: number;
-  amplitude2: number;
-};
-type StarParticle = {
-  normalizedX: number;
-  normalizedY: number;
-  radius: number;
-  alpha: number;
-  twinkleSpeed: number;
-  phase: number;
-  layer: 0 | 1 | 2;
-  horizontalSpeed: number;
-};
-type AuroraEvent = {
-  startedAt: number;
-  fadeInDuration: number;
-  holdDuration: number;
-  fadeOutDuration: number;
-  direction: 1 | -1;
-  phase: number;
-};
-type ShootingStarEvent = {
-  startedAt: number;
-  duration: number;
-  startXRatio: number;
-  startYRatio: number;
-  direction: 1 | -1;
-  travelXRatio: number;
-  travelYRatio: number;
-};
-type PhysicsDiagnosticAlert = {
-  title: string;
-  detail: string;
-  phase: string;
-  timestamp: number;
-};
-type SavedCameraState = { scale: number; offsetY: number };
-const MIN_DYNAMIC_CAMERA_SCALE = 0.20;
-const UFO_CHECK_INTERVAL_MS = 45_000;
-const UFO_APPEARANCE_CHANCE = 0.03;
-const DEEP_CORE_BODY_THRESHOLD = 1_000;
-const DEEP_CORE_INSET = 300;
-const DEEP_CORE_EVALUATION_INTERVAL = 60;
-const TERRAIN_EVALUATION_INTERVAL = 60;
-const TERRAIN_SEGMENT_COUNT = 96;
-const TERRAIN_VIEWPORT_MARGIN = 50;
-const SPACE_EVENT_ALTITUDE = 3_000;
-const ALIEN_EVENT_ALTITUDE = 10_000;
-const ALIEN_CHECK_INTERVAL_MS = 30_000;
-const ALIEN_APPEARANCE_CHANCE = 0.05;
-const AURORA_EVENT_ALTITUDE = 5_000;
-const AURORA_CHECK_INTERVAL_MS = 60_000;
-const AURORA_APPEARANCE_CHANCE = 0.18;
-const SHOOTING_STAR_EVENT_ALTITUDE = 3_000;
-const SHOOTING_STAR_CHECK_INTERVAL_MS = 60_000;
-const SHOOTING_STAR_APPEARANCE_CHANCE = 0.18;
-const SUPPLY_GOLDEN_CHANCE = 0.01;
-const BONUS_BREAK_GOLDEN_CHANCE = 0.10;
-const SUPPLY_GIANT_CHANCE = 0.02;
-const BONUS_BREAK_GIANT_CHANCE = 0.30;
-const SAVED_CAMERA_STORAGE_KEY = "pomo_saved_camera";
+export type { PhysicsCanvasHandle } from "@/types/game";
 
-export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function PhysicsCanvas(
+export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>(function PhysicsCanvas(
   {
     counts,
     hydrated,
@@ -181,6 +70,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     onGoldenTomatoDrop,
     activeBuffs,
     isUfoUnlocked,
+    isOctopusUnlocked,
     debugUfoMode = false,
     isBonusBreakMode = false,
     timerMode,
@@ -203,6 +93,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
   const goldenDropRef = useRef(onGoldenTomatoDrop);
   const activeBuffsRef = useRef(activeBuffs);
   const isUfoUnlockedRef = useRef(isUfoUnlocked);
+  const isOctopusUnlockedRef = useRef(isOctopusUnlocked);
   const debugUfoModeRef = useRef(debugUfoMode);
   const isBonusBreakModeRef = useRef(isBonusBreakMode);
   const isFocusRunningRef = useRef(timerMode === "focus" && isTimerRunning);
@@ -222,6 +113,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
   useEffect(() => { goldenDropRef.current = onGoldenTomatoDrop; }, [onGoldenTomatoDrop]);
   useEffect(() => { activeBuffsRef.current = activeBuffs; }, [activeBuffs]);
   useEffect(() => { isUfoUnlockedRef.current = isUfoUnlocked; }, [isUfoUnlocked]);
+  useEffect(() => { isOctopusUnlockedRef.current = isOctopusUnlocked; }, [isOctopusUnlocked]);
   useEffect(() => { debugUfoModeRef.current = debugUfoMode; }, [debugUfoMode]);
   useEffect(() => { isBonusBreakModeRef.current = isBonusBreakMode; }, [isBonusBreakMode]);
   useEffect(() => { altitudeChangeRef.current = onAltitudeChange; }, [onAltitudeChange]);
@@ -243,12 +135,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     const toolbar = container.closest("section")?.querySelector<HTMLElement>("[data-control-toolbar]");
 
     const { Engine, Bodies, Body, Composite } = Matter;
-    const engine = Engine.create({
-      enableSleeping: true,
-      positionIterations: 10,
-      velocityIterations: 8,
-      gravity: { x: 0, y: 1.05 },
-    });
+    const engine = Engine.create(PHYSICS_ENGINE_OPTIONS);
     const context = canvas.getContext("2d");
     if (!context) return;
 
@@ -269,6 +156,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     const birdDeliveries: BirdDelivery[] = [];
     const balloonEvents: BalloonEvent[] = [];
     const ufoEvents: UfoEvent[] = [];
+    let octopusEvent: OctopusEvent | null = null;
     const alienEvents: AlienEvent[] = [];
     const deferredDeliveries: boolean[] = [];
     const juiceParticles: JuiceParticle[] = [];
@@ -305,7 +193,11 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     let ufoEventTime = performance.now();
     let windOffset = 0;
     let previousFrameTime = performance.now();
-    let nextUfoCheckAt = ufoEventTime + UFO_CHECK_INTERVAL_MS;
+    let nextUfoCheckAt = ufoEventTime + LOW_ALTITUDE_EVENT_INTERVAL_MS;
+    let nextOctopusCheckAt = ufoEventTime + OCTOPUS_CHECK_INTERVAL_MS;
+    let nextRocketCheckAt = ufoEventTime + LOW_ALTITUDE_EVENT_INTERVAL_MS;
+    let previousHighAltitudeEventBand = false;
+    let previousRocketEligible = false;
     let nextAlienCheckAt = ufoEventTime + ALIEN_CHECK_INTERVAL_MS;
     let nextAuroraCheckAt = ufoEventTime + AURORA_CHECK_INTERVAL_MS;
     let auroraEvent: AuroraEvent | null = null;
@@ -354,7 +246,12 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       previousFrameTime = performance.now();
       deferredDeliveries.length = 0;
       if (!pageHidden) {
-        nextUfoCheckAt = ufoEventTime + UFO_CHECK_INTERVAL_MS;
+        const eventInterval = currentAltitude >= ALIEN_EVENT_ALTITUDE
+          ? HIGH_ALTITUDE_EVENT_INTERVAL_MS
+          : LOW_ALTITUDE_EVENT_INTERVAL_MS;
+        nextUfoCheckAt = ufoEventTime + eventInterval;
+        nextOctopusCheckAt = ufoEventTime + OCTOPUS_CHECK_INTERVAL_MS;
+        nextRocketCheckAt = ufoEventTime + eventInterval;
         nextAlienCheckAt = ufoEventTime + ALIEN_CHECK_INTERVAL_MS;
         nextAuroraCheckAt = ufoEventTime + AURORA_CHECK_INTERVAL_MS;
         nextShootingStarCheckAt = ufoEventTime + SHOOTING_STAR_CHECK_INTERVAL_MS;
@@ -535,31 +432,16 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
     };
 
     const saveCameraState = () => {
-      try {
-        const savedCamera: SavedCameraState = {
-          scale: currentScale.current,
-          offsetY: currentOffsetY.current,
-        };
-        localStorage.setItem(SAVED_CAMERA_STORAGE_KEY, JSON.stringify(savedCamera));
-      } catch {
-        return;
-      }
+      const savedCamera: SavedCameraState = {
+        scale: currentScale.current,
+        offsetY: currentOffsetY.current,
+      };
+      saveSavedCameraState(savedCamera);
     };
     saveCameraStateRef.current = saveCameraState;
 
     const readSavedCameraState = (): SavedCameraState | null => {
-      try {
-        const parsed: unknown = JSON.parse(localStorage.getItem(SAVED_CAMERA_STORAGE_KEY) ?? "null");
-        if (!parsed || typeof parsed !== "object") return null;
-        const value = parsed as Partial<SavedCameraState>;
-        if (!Number.isFinite(value.scale) || !Number.isFinite(value.offsetY)) return null;
-        return {
-          scale: Math.min(1, Math.max(MIN_DYNAMIC_CAMERA_SCALE, Number(value.scale))),
-          offsetY: Math.max(0, Number(value.offsetY)),
-        };
-      } catch {
-        return null;
-      }
+      return loadSavedCameraState();
     };
 
     const createRadius = (giantChance = SUPPLY_GIANT_CHANCE) => {
@@ -663,16 +545,6 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           forceCacheRefresh = true;
         }
       }
-    };
-
-    const getTomatoDiagnosticType = (body: Matter.Body, tomato?: TomatoBodyData) => {
-      if (!tomato) return body.label || "unknown";
-      if (tomato.isDud) return "Dud";
-      if (tomato.golden) return "Gold";
-      const radiusRatio = Number.isFinite(tomato.radius) ? tomato.radius / 22.5 : 1;
-      if (radiusRatio >= 2) return "Giant";
-      if (radiusRatio >= 1.2) return "Medium";
-      return "Standard";
     };
 
     const reportPhysicsDiagnostic = (
@@ -832,43 +704,6 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       }
     };
 
-    const correctDeepTomatoOverlap = (bodyA: Matter.Body, bodyB: Matter.Body) => {
-      if (bodyA.label !== "tomato" || bodyB.label !== "tomato") return;
-      const tomatoA = bodyA.plugin.tomato as TomatoBodyData | undefined;
-      const tomatoB = bodyB.plugin.tomato as TomatoBodyData | undefined;
-      const radiusA = tomatoA?.radius;
-      const radiusB = tomatoB?.radius;
-      if (!Number.isFinite(radiusA) || !Number.isFinite(radiusB) || !radiusA || !radiusB) return;
-      const deltaX = bodyB.position.x - bodyA.position.x;
-      const deltaY = bodyB.position.y - bodyA.position.y;
-      const centerDistance = Math.hypot(deltaX, deltaY);
-      const combinedRadius = radiusA + radiusB;
-      if (!Number.isFinite(centerDistance) || centerDistance >= combinedRadius * 0.85) return;
-      const directionX = centerDistance > 0.0001
-        ? deltaX / centerDistance
-        : bodyA.id < bodyB.id ? 1 : -1;
-      const directionY = centerDistance > 0.0001 ? deltaY / centerDistance : 0;
-      const correctionDistance = (combinedRadius - centerDistance) * 0.30;
-      const movableWeightA = bodyA.isStatic ? 0 : 1;
-      const movableWeightB = bodyB.isStatic ? 0 : 1;
-      const totalMovableWeight = movableWeightA + movableWeightB;
-      if (totalMovableWeight === 0) return;
-      if (movableWeightA > 0) {
-        const correctionShare = correctionDistance * movableWeightA / totalMovableWeight;
-        Body.setPosition(bodyA, {
-          x: bodyA.position.x - directionX * correctionShare,
-          y: bodyA.position.y - directionY * correctionShare,
-        });
-      }
-      if (movableWeightB > 0) {
-        const correctionShare = correctionDistance * movableWeightB / totalMovableWeight;
-        Body.setPosition(bodyB, {
-          x: bodyB.position.x + directionX * correctionShare,
-          y: bodyB.position.y + directionY * correctionShare,
-        });
-      }
-    };
-
     const evaluateCollisionStart = (event: Matter.IEventCollision<Matter.Engine>) => {
       lastPhysicsPhase = "collisionStart";
       for (const pair of event.pairs) {
@@ -950,39 +785,6 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         }
       }
       if (body === terrainBody) terrainBody = null;
-    };
-
-    const sanitizeWorldBodies = () => {
-      const bodies = [...Composite.allBodies(engine.world)];
-      for (const body of bodies) {
-        const values = [body.position.x, body.position.y, body.velocity.x, body.velocity.y];
-        if (values.some((value) => !Number.isFinite(value))) {
-          reportPhysicsDiagnostic(
-            "NaN / Infinity detected",
-            `Body ID ${body.id}: position=(${body.position.x}, ${body.position.y}), velocity=(${body.velocity.x}, ${body.velocity.y})`,
-            body,
-          );
-          removeInvalidBody(body);
-          continue;
-        }
-        const speed = Math.hypot(body.velocity.x, body.velocity.y);
-        if (speed > 30) {
-          const velocityScale = 25 / speed;
-          Body.setVelocity(body, {
-            x: body.velocity.x * velocityScale,
-            y: body.velocity.y * velocityScale,
-          });
-        }
-        const postClampValues = [body.position.x, body.position.y, body.velocity.x, body.velocity.y];
-        if (postClampValues.some((value) => !Number.isFinite(value))) {
-          reportPhysicsDiagnostic(
-            "NaN / Infinity detected after velocity clamp",
-            `Body ID ${body.id}: position=(${body.position.x}, ${body.position.y}), velocity=(${body.velocity.x}, ${body.velocity.y})`,
-            body,
-          );
-          removeInvalidBody(body);
-        }
-      }
     };
 
     const stabilizeLowerPileBeforeUpdate = () => {
@@ -1068,13 +870,19 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
 
     const handleBeforeUpdate = () => {
       lastPhysicsPhase = "beforeUpdate lower-pile stabilization";
-      sanitizeWorldBodies();
+      sanitizeWorldBodies([...Composite.allBodies(engine.world)], {
+        reportPhysicsDiagnostic,
+        removeInvalidBody,
+      });
       stabilizeLowerPileBeforeUpdate();
     };
 
     const handleAfterUpdate = () => {
       lastPhysicsPhase = "afterUpdate";
-      sanitizeWorldBodies();
+      sanitizeWorldBodies([...Composite.allBodies(engine.world)], {
+        reportPhysicsDiagnostic,
+        removeInvalidBody,
+      });
     };
 
     Matter.Events.on(engine, "collisionStart", handleStrongImpact);
@@ -1085,8 +893,9 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       if (pageHidden) return;
       if (debugUfoModeRef.current) return;
       const useSpaceVehicles = currentAltitude >= SPACE_EVENT_ALTITUDE;
+      const useSatellite = currentAltitude >= ALIEN_EVENT_ALTITUDE;
       const balloonChance = activeBuffsRef.current.balloonBoost ? 0.02 : 0.01;
-      if (Math.random() < balloonChance) {
+      if (!useSpaceVehicles && Math.random() < balloonChance) {
         const startedAt = ufoEventTime;
         balloonEvents.push({
           startedAt,
@@ -1096,29 +905,37 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           initialDropPending: true,
           enteredViewport: false,
           nextDropAt: startedAt,
-          vehicle: useSpaceVehicles ? "rocket" : "balloon",
+          vehicle: "balloon",
         });
         return;
       }
       const deliverySpec = useSpaceVehicles ? createMediumTomatoSpec(golden) : createTomatoSpec(golden);
+      const startedAt = ufoEventTime;
+      const satelliteStartYRatio = 0.25 + (Math.random() - 0.5) * 0.20;
+      const satelliteEndYRatio = 0.25 + (Math.random() - 0.5) * 0.20;
       birdDeliveries.push({
-        startedAt: ufoEventTime,
-        duration: 2200 + Math.random() * 600,
+        startedAt,
+        duration: useSatellite ? 9_500 + Math.random() * 1_000 : 2200 + Math.random() * 600,
         releaseAt: 0.38 + Math.random() * 0.24,
         direction: Math.random() < 0.5 ? 1 : -1,
         golden,
         radius: deliverySpec.radius,
         isSquishy: deliverySpec.isSquishy,
         released: false,
-        vehicle: useSpaceVehicles ? "plane" : "bird",
-        nextContrailAt: ufoEventTime,
+        vehicle: useSatellite ? "satellite" : useSpaceVehicles ? "plane" : "bird",
+        nextContrailAt: startedAt,
+        initialRotation: Math.random() * Math.PI * 2,
+        nextRadioAt: startedAt + 2_000 + Math.random() * 3_000,
+        radioPulseStartedAt: Number.NEGATIVE_INFINITY,
+        satelliteStartYRatio,
+        satelliteEndYRatio,
       });
     };
     const queueBirdDelivery = (golden = false) => {
       if (pageHidden) return;
       if (!isSupplyRunningRef.current) return;
       if (debugUfoModeRef.current) return;
-      if (ufoEvents.length > 0) {
+      if (ufoEvents.length > 0 || octopusEvent) {
         deferredDeliveries.push(golden);
         return;
       }
@@ -1177,15 +994,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
 
     const optimizeDeepCore = (now: number) => {
       const visibleBounds = camera.current;
-      const visibleWidth = Math.max(1, visibleBounds.right - visibleBounds.left);
-      const centralCoreLeft = visibleBounds.left + visibleWidth * 0.25;
-      const centralCoreRight = visibleBounds.left + visibleWidth * 0.75;
-      const visibleTomatoBodies = [...activeBodies, ...sleepingBodies].filter((body) =>
-        body.bounds.max.x >= visibleBounds.left
-        && body.bounds.min.x <= visibleBounds.right
-        && body.bounds.max.y >= visibleBounds.top
-        && body.bounds.min.y <= visibleBounds.bottom,
-      );
+      const centralCoreBounds = getCentralCoreBounds(visibleBounds);
+      const centralCoreLeft = centralCoreBounds.left;
+      const centralCoreRight = centralCoreBounds.right;
+      const visibleTomatoBodies = getVisibleTomatoBodies(activeBodies, sleepingBodies, visibleBounds);
       const tomatoBodyCount = visibleTomatoBodies.length;
       if (tomatoBodyCount <= DEEP_CORE_BODY_THRESHOLD) {
         restoreStaticCoreBodies();
@@ -1229,59 +1041,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       }
     };
 
-    const drawTomato = (
-      target: CanvasRenderingContext2D,
-      x: number,
-      y: number,
-      radius: number,
-      golden: boolean,
-      rotation = 0,
-      isSquishy = false,
-      ripeness = isSquishy ? 1 : 0,
-    ) => {
-      target.save();
-      target.translate(x, y);
-      target.rotate(rotation);
-      const ripeAmount = Math.min(1, Math.max(0, ripeness));
-      if (imageReady) {
-        target.drawImage(image, -radius, -radius, radius * 2, radius * 2);
-        if (isSquishy && ripeAmount > 0) {
-          target.globalCompositeOperation = "source-atop";
-          target.fillStyle = `rgba(110, 16, 16, ${ripeAmount * 0.38})`;
-          target.fillRect(-radius, -radius, radius * 2, radius * 2);
-          target.globalCompositeOperation = "source-over";
-        }
-      } else {
-        const bodyRadius = radius * 0.9;
-        const ripeRed = Math.round(239 + (199 - 239) * ripeAmount);
-        const ripeGreen = Math.round(83 + (54 - 83) * ripeAmount);
-        const ripeBlue = Math.round(80 + (50 - 80) * ripeAmount);
-        const strokeRed = Math.round(181 + (132 - 181) * ripeAmount);
-        const strokeGreen = Math.round(47 + (36 - 47) * ripeAmount);
-        const strokeBlue = Math.round(45 + (33 - 45) * ripeAmount);
-        target.beginPath();
-        target.arc(0, radius * 0.08, bodyRadius, 0, Math.PI * 2);
-        target.fillStyle = golden ? "#f3bd39" : `rgb(${ripeRed}, ${ripeGreen}, ${ripeBlue})`;
-        target.fill();
-        target.lineWidth = Math.max(1, radius * 0.07);
-        target.strokeStyle = golden ? "#b27b16" : `rgb(${strokeRed}, ${strokeGreen}, ${strokeBlue})`;
-        target.stroke();
-
-        // Five-leaf calyx, always anchored to the same local rotation.
-        target.beginPath();
-        for (let leaf = 0; leaf < 5; leaf++) {
-          const angle = -Math.PI / 2 + leaf * Math.PI * 0.4;
-          const outer = radius * 0.54;
-          const inner = radius * 0.14;
-          target.lineTo(Math.cos(angle) * outer, -radius * 0.48 + Math.sin(angle) * outer * 0.42);
-          target.lineTo(Math.cos(angle + 0.3) * inner, -radius * 0.48 + Math.sin(angle + 0.3) * inner);
-        }
-        target.closePath();
-        target.fillStyle = "#3f6212";
-        target.fill();
-      }
-      target.restore();
-    };
+    const drawTomato = createTomatoRenderer(image, () => imageReady);
 
     const drawTomatoBody = (body: Matter.Body, target: CanvasRenderingContext2D = context) => {
       const { golden, radius, isSquishy, ripeness } = body.plugin.tomato as TomatoBodyData;
@@ -1382,16 +1142,11 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
 
     const rebuildTerrainBody = () => {
       const terrainBottom = height + 40;
-      const parts = terrainTopByBin.flatMap((top, index) => {
-        if (!Number.isFinite(top) || top >= terrainBottom) return [];
-        const segmentHeight = terrainBottom - top;
-        return [Bodies.rectangle(
-          terrainLeft + (index + 0.5) * terrainBinWidth,
-          top + segmentHeight / 2,
-          terrainBinWidth + 1,
-          segmentHeight,
-          { isStatic: true, label: "archived-terrain-segment" },
-        )];
+      const parts = createTerrainSegmentParts({
+        terrainTopByBin,
+        terrainBottom,
+        terrainLeft,
+        terrainBinWidth,
       });
       if (!parts.length) return;
       const nextTerrainBody = Body.create({ parts, isStatic: true, label: "archived-terrain" });
@@ -1455,200 +1210,16 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       }
     };
 
-    const drawBird = (
-      x: number,
-      y: number,
-      size: number,
-      direction: 1 | -1,
-      carrying: boolean,
-      golden: boolean,
-      isSquishy: boolean,
-      tomatoRadius: number,
-      time: number,
-    ) => {
-      context.save();
-      context.translate(x, y);
-      context.scale(direction, 1);
-      context.globalAlpha = 0.52;
-      context.fillStyle = "#1f2937";
-      context.strokeStyle = "rgba(248, 250, 252, 0.96)";
-      context.lineWidth = Math.max(1.25, size * 0.1);
-      context.lineJoin = "round";
-
-      // A deliberately stepped two-frame flap, similar to a pixel-game sprite.
-      const wingsUp = Math.floor(time / 200) % 2 === 0;
-
-      // Side-facing body, beak and tail: straight segments only.
-      context.beginPath();
-      context.moveTo(size * 1.38, 0);
-      context.lineTo(size * 0.78, -size * 0.22);
-      context.lineTo(size * 0.28, -size * 0.3);
-      context.lineTo(-size * 0.5, -size * 0.2);
-      context.lineTo(-size * 1.25, -size * 0.48);
-      context.lineTo(-size * 0.96, 0);
-      context.lineTo(-size * 1.22, size * 0.4);
-      context.lineTo(-size * 0.42, size * 0.2);
-      context.lineTo(size * 0.46, size * 0.22);
-      context.lineTo(size * 0.9, size * 0.12);
-      context.closePath();
-      context.fill();
-      context.stroke();
-
-      // Two fixed polygon poses: wing up / wing down.
-      context.beginPath();
-      if (wingsUp) {
-        context.moveTo(-size * 0.42, -size * 0.05);
-        context.lineTo(-size * 0.12, -size * 1.28);
-        context.lineTo(size * 0.42, -size * 0.2);
-        context.lineTo(size * 0.08, size * 0.06);
-      } else {
-        context.moveTo(-size * 0.42, size * 0.04);
-        context.lineTo(size * 0.02, size * 1.16);
-        context.lineTo(size * 0.48, size * 0.18);
-        context.lineTo(size * 0.08, -size * 0.06);
-      }
-      context.closePath();
-      context.fill();
-      context.stroke();
-
-      context.restore();
-      if (carrying) {
-        const tomatoY = y + size * 0.62 + tomatoRadius;
-        drawTomato(context, x, tomatoY, tomatoRadius, golden, 0, isSquishy);
-      }
-    };
-
-    const planeSvgPathString = "M9.35004 0.000335693C9.75295 -0.0084185 10.139 0.15621 10.4194 0.446625L17.3803 7.74838L23.435 7.63901C24.2075 7.62781 24.9051 7.96308 25.3774 8.49936H21.9995C20.5115 8.49952 22.9625 9.48455 22.9995 9.49936H25.9125C25.9645 9.69329 25.9963 9.89589 25.9995 10.1058C26.0197 11.4916 24.9155 12.6349 23.5219 12.6595L4.44183 12.9886L3.82367 12.9994C2.43429 13.0252 1.22318 12.0552 0.950623 10.6966L0.0150757 6.02573C-0.0758845 5.58707 0.256726 5.1753 0.706482 5.1683L1.48871 5.1517C1.81738 5.15083 2.13026 5.29196 2.33832 5.5433L4.3598 7.97006L9.15765 7.88998L6.71234 0.991547C6.55328 0.529472 6.88872 0.0419396 7.38129 0.0354919L9.35004 0.000335693Z";
-    const planePath = new Path2D(planeSvgPathString);
-
-    const drawPlane = (
-      x: number,
-      y: number,
-      size: number,
-      direction: 1 | -1,
-      carrying: boolean,
-      golden: boolean,
-      isSquishy: boolean,
-      tomatoRadius: number,
-    ) => {
-      context.save();
-      context.translate(x, y);
-      context.scale(direction, 1);
-      context.globalAlpha = 0.52;
-      const planeScale = size * 2.63 / 26;
-      context.scale(planeScale, planeScale);
-      context.translate(-13, -6.5);
-      context.fillStyle = "#1f2937";
-      context.strokeStyle = "rgba(248, 250, 252, 0.96)";
-      context.lineWidth = 1.4;
-      context.lineJoin = "round";
-      context.fill(planePath);
-      context.stroke(planePath);
-      context.restore();
-      if (carrying) {
-        drawTomato(context, x, y + size * 0.62 + tomatoRadius, tomatoRadius, golden, 0, isSquishy);
-      }
-    };
-
-    const drawBalloon = (x: number, y: number, size: number, direction: 1 | -1) => {
-      context.save();
-      context.translate(x, y);
-      context.scale(direction, 1);
-      context.globalAlpha = 0.52;
-      context.fillStyle = "#64748b";
-      context.beginPath();
-      context.ellipse(0, -size * 0.35, size * 0.72, size, 0, 0, Math.PI * 2);
-      context.moveTo(-size * 0.42, size * 0.28);
-      context.lineTo(-size * 0.22, size * 0.9);
-      context.lineTo(size * 0.22, size * 0.9);
-      context.lineTo(size * 0.42, size * 0.28);
-      context.closePath();
-      context.rect(-size * 0.34, size * 0.82, size * 0.68, size * 0.42);
-      context.fill();
-      context.restore();
-    };
-
-    const drawRocket = (x: number, y: number, size: number, direction: 1 | -1, time: number) => {
-      context.save();
-      context.translate(x, y);
-      context.scale(direction, 1);
-      context.globalAlpha = 0.52;
-      context.fillStyle = "#334155";
-      context.strokeStyle = "rgba(248, 250, 252, 0.96)";
-      context.lineWidth = Math.max(1.25, size * 0.08);
-      context.lineJoin = "round";
-      context.beginPath();
-      context.moveTo(size * 1.22, 0);
-      context.quadraticCurveTo(size * 0.72, -size * 0.62, -size * 0.5, -size * 0.46);
-      context.lineTo(-size * 0.88, -size * 0.86);
-      context.lineTo(-size * 0.82, -size * 0.28);
-      context.lineTo(-size * 1.05, -size * 0.2);
-      context.lineTo(-size * 1.05, size * 0.2);
-      context.lineTo(-size * 0.82, size * 0.28);
-      context.lineTo(-size * 0.88, size * 0.86);
-      context.lineTo(-size * 0.5, size * 0.46);
-      context.quadraticCurveTo(size * 0.72, size * 0.62, size * 1.22, 0);
-      context.closePath();
-      context.fill();
-      context.stroke();
-      context.fillStyle = "#38bdf8";
-      context.strokeStyle = "rgba(8, 47, 73, 0.96)";
-      context.beginPath();
-      context.moveTo(-size * 1.05, -size * 0.18);
-      context.lineTo(-size * (1.45 + Math.sin(time * 0.01) * 0.12), 0);
-      context.lineTo(-size * 1.05, size * 0.18);
-      context.closePath();
-      context.fill();
-      context.stroke();
-      context.restore();
-    };
-
-    const drawUfo = (x: number, y: number, size: number) => {
-      context.save();
-      context.translate(x, y);
-      context.globalAlpha = 0.52;
-      context.fillStyle = "#475569";
-      context.strokeStyle = "rgba(207, 250, 254, 0.98)";
-      context.lineWidth = Math.max(1.25, size * 0.07);
-      context.lineJoin = "round";
-      context.beginPath();
-      context.ellipse(0, -size * 0.25, size * 0.48, size * 0.38, 0, Math.PI, Math.PI * 2);
-      context.fill();
-      context.stroke();
-      context.beginPath();
-      context.moveTo(-size, 0);
-      context.lineTo(-size * 0.58, -size * 0.28);
-      context.lineTo(size * 0.58, -size * 0.28);
-      context.lineTo(size, 0);
-      context.lineTo(size * 0.55, size * 0.3);
-      context.lineTo(-size * 0.55, size * 0.3);
-      context.closePath();
-      context.fill();
-      context.stroke();
-      context.fillStyle = "#ef4444";
-      for (const lightX of [-0.55, 0, 0.55]) {
-        context.fillRect(lightX * size - size * 0.08, size * 0.02, size * 0.16, size * 0.12);
-      }
-      context.restore();
-    };
-
-    const alienSvgPathString = "M26.75 22.25H27.5C27.9125 22.25 28.25 22.5875 28.25 23V24.0725C28.25 24.305 28.055 24.5 27.8225 24.5H26.75C26.3375 24.5 26 24.1625 26 23.75V23C26 22.5875 26.3375 22.25 26.75 22.25ZM28.9925 41.7725H29.75C30.1625 41.7725 30.5 41.435 30.5 41.0225V40.2725C30.5 39.86 30.1625 39.5225 29.75 39.5225H27.9275C27.695 39.5225 27.5 39.7175 27.5 39.95V40.28C27.5 41.105 28.1675 41.7725 28.9925 41.7725ZM33.5 40.2725V41.0225C33.5 41.435 33.8375 41.7725 34.25 41.7725H35.0225C35.84 41.7725 36.5 41.1125 36.5 40.295V39.95C36.5 39.8366 36.455 39.7279 36.3748 39.6477C36.2946 39.5675 36.1859 39.5225 36.0725 39.5225H34.25C33.8375 39.5225 33.5 39.86 33.5 40.2725ZM38 23.75V23C38 22.5875 37.6625 22.25 37.25 22.25H36.5C36.0875 22.25 35.75 22.5875 35.75 23V24.0725C35.75 24.305 35.945 24.5 36.1775 24.5H37.25C37.6625 24.5 38 24.1625 38 23.75ZM41 28.2725C41 27.86 41.3375 27.5225 41.75 27.5225C42.1625 27.5225 42.5 27.86 42.5 28.2725V31.2725C42.5 31.685 42.1625 32.0225 41.75 32.0225H41.4275C41.3141 32.0225 41.2054 32.0675 41.1252 32.1477C41.045 32.2279 41 32.3366 41 32.45V32.795C41 33.6125 40.34 34.2725 39.5225 34.2725H39.1775C39.0641 34.2725 38.9554 34.3175 38.8752 34.3977C38.795 34.4779 38.75 34.5866 38.75 34.7V38.03C38.75 38.855 38.0825 39.5225 37.2575 39.5225H36.9275C36.8141 39.5225 36.7054 39.4775 36.6252 39.3973C36.545 39.3171 36.5 39.2084 36.5 39.095V36.95C36.5 36.8366 36.455 36.7279 36.3748 36.6477C36.2946 36.5675 36.1859 36.5225 36.0725 36.5225H27.9275C27.8141 36.5225 27.7054 36.5675 27.6252 36.6477C27.545 36.7279 27.5 36.8366 27.5 36.95V39.095C27.5 39.3275 27.3125 39.5225 27.0725 39.5225H26.75C25.925 39.5225 25.25 38.8475 25.25 38.0225V34.7C25.25 34.4675 25.055 34.2725 24.8225 34.2725H24.5C23.675 34.2725 23 33.5975 23 32.7725V32.45C23 32.2175 22.805 32.0225 22.5725 32.0225H22.25C21.8375 32.0225 21.5 31.685 21.5 31.2725V28.2725C21.5 27.86 21.8375 27.5225 22.25 27.5225H22.2725C22.685 27.5225 23.0225 27.86 23.0225 28.2725V29.345C23.0225 29.585 23.21 29.7725 23.45 29.7725L24.8 29.765C25.025 29.7575 25.22 29.6 25.25 29.3825C25.43 28.025 26.5325 26.9675 27.8975 26.795C28.1 26.7725 28.25 26.585 28.25 26.375V24.9275C28.25 24.695 28.445 24.5 28.685 24.5H28.91C29.7875 24.5 30.5 25.2125 30.5 26.09V26.345C30.5 26.585 30.695 26.7725 30.9275 26.7725H33.0725C33.305 26.7725 33.5 26.585 33.5 26.345V26.0525C33.5 25.1975 34.1975 24.5 35.0525 24.5H35.3225C35.555 24.5 35.75 24.695 35.75 24.9275V26.375C35.75 26.585 35.9 26.7725 36.1025 26.795C37.4675 26.96 38.555 28.025 38.7275 29.39C38.7575 29.615 38.9525 29.7725 39.1775 29.7725H40.5725C40.805 29.7725 41 29.585 41 29.345V28.2725ZM28.25 32.75C28.3496 32.75 28.4483 32.7302 28.5402 32.6916C28.6321 32.6531 28.7153 32.5967 28.7852 32.5256C28.855 32.4545 28.9099 32.3702 28.9468 32.2777C28.9837 32.1851 29.0018 32.0861 29 31.9865V30.5135C29 30.0897 28.6655 29.75 28.25 29.75C27.8337 29.75 27.5 30.0897 27.5 30.5135V31.9865C27.5 32.4103 27.8337 32.75 28.25 32.75ZM35 31.9865C35 32.4103 35.3337 32.75 35.75 32.75C36.1663 32.75 36.5 32.4028 36.5 31.9865V30.5135C36.5 30.0897 36.1663 29.75 35.75 29.75C35.3337 29.75 35 30.0897 35 30.5135V31.9865Z";
-    const alienPath = new Path2D(alienSvgPathString);
-
-    const drawAlien = (x: number, y: number, size: number, direction: 1 | -1) => {
-      context.save();
-      context.translate(x, y);
-      context.scale(direction, 1);
-      const alienScale = size / 64;
-      context.scale(alienScale, alienScale);
-      context.translate(-32, -32);
-      context.globalAlpha = breakModeRef.current ? 0.48 : 0.62;
-      context.fillStyle = breakModeRef.current ? "#312e81" : "#a7f3d0";
-      context.shadowColor = breakModeRef.current ? "rgba(99, 102, 241, 0.36)" : "rgba(52, 211, 153, 0.42)";
-      context.shadowBlur = 10;
-      context.fill(alienPath);
-      context.restore();
-    };
+    const {
+      drawBird,
+      drawPlane,
+      drawBalloon,
+      drawRocket,
+      drawUfo,
+      drawOctopus,
+      drawAlien,
+      drawSatellite,
+    } = createCarrierRenderers(context, drawTomato, () => breakModeRef.current);
 
     function buildBackgroundCanvas() {
       if (!backgroundContext) return;
@@ -1684,76 +1255,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       backgroundContext.clearRect(backgroundWorld.left, backgroundWorld.top, backgroundWorld.width, backgroundWorld.height);
     }
 
-    const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
-    const smoothStep = (from: number, to: number, value: number) => {
-      const progress = clampUnit((value - from) / Math.max(1, to - from));
-      return progress * progress * (3 - 2 * progress);
-    };
-    const mixHexColor = (from: string, to: string, amount: number) => {
-      const progress = clampUnit(amount);
-      const fromValue = Number.parseInt(from.slice(1), 16);
-      const toValue = Number.parseInt(to.slice(1), 16);
-      const fromRed = fromValue >> 16;
-      const fromGreen = fromValue >> 8 & 255;
-      const fromBlue = fromValue & 255;
-      const toRed = toValue >> 16;
-      const toGreen = toValue >> 8 & 255;
-      const toBlue = toValue & 255;
-      const red = Math.round(fromRed + (toRed - fromRed) * progress);
-      const green = Math.round(fromGreen + (toGreen - fromGreen) * progress);
-      const blue = Math.round(fromBlue + (toBlue - fromBlue) * progress);
-      return `rgb(${red}, ${green}, ${blue})`;
-    };
-    const getSkyColors = (altitude: number, isBreak: boolean) => {
-      const palettes = isBreak
-        ? [
-            { altitude: 0, top: "#dff5e5", middle: "#e8f5e9", bottom: "#f8faf8" },
-            { altitude: 1_000, top: "#b9e6ff", middle: "#dbeafe", bottom: "#f8fafc" },
-            { altitude: 2_000, top: "#b8c6d8", middle: "#d3dce7", bottom: "#eef2f7" },
-            { altitude: 2_500, top: "#6ecbf5", middle: "#bae6fd", bottom: "#f0f9ff" },
-            { altitude: 3_000, top: "#ddd6fe", middle: "#ede9fe", bottom: "#faf5ff" },
-          ]
-        : [
-            { altitude: 0, top: "#0f1f17", middle: "#17251e", bottom: "#1a1a1a" },
-            { altitude: 1_000, top: "#102a43", middle: "#193b55", bottom: "#31495b" },
-            { altitude: 2_000, top: "#111827", middle: "#253247", bottom: "#475569" },
-            { altitude: 2_500, top: "#075985", middle: "#0c4a6e", bottom: "#0369a1" },
-            { altitude: 3_000, top: "#030712", middle: "#0b1022", bottom: "#17153b" },
-          ];
-      let lower = palettes[0];
-      let upper = palettes[palettes.length - 1];
-      for (let index = 1; index < palettes.length; index++) {
-        if (altitude <= palettes[index].altitude) {
-          lower = palettes[index - 1];
-          upper = palettes[index];
-          break;
-        }
-        lower = palettes[index];
-      }
-      const progress = lower === upper
-        ? 0
-        : smoothStep(lower.altitude, upper.altitude, altitude);
-      return {
-        top: mixHexColor(lower.top, upper.top, progress),
-        middle: mixHexColor(lower.middle, upper.middle, progress),
-        bottom: mixHexColor(lower.bottom, upper.bottom, progress),
-      };
-    };
-
-    const pisaTowerPaths = [
-      new Path2D("M22 41.8065H42"),
-      new Path2D("M30.625 23.5435L38.3525 25.6145L34 41.8065H25.5L30.625 23.5435Z"),
-      new Path2D("M29.6585 23.285L39.318 25.873M28.105 29.0805L37.765 31.6685"),
-      new Path2D("M32.741 30.2725L33.259 28.3405"),
-      new Path2D("M26.553 34.8765L36.212 37.4645"),
-      new Path2D("M31.241 35.7725L31.759 33.8405"),
-      new Path2D("M36.9382 23.1647L33.0745 22.1294C32.8077 22.0579 32.5336 22.2162 32.4621 22.483L32.2033 23.4489C32.1318 23.7156 32.2901 23.9898 32.5568 24.0613L36.4205 25.0965C36.6873 25.168 36.9614 25.0097 37.0329 24.743L37.2917 23.7771C37.3632 23.5103 37.2049 23.2362 36.9382 23.1647Z"),
-      new Path2D("M29.741 41.2725L30.259 39.3405"),
-    ];
-    const statueOfLibertyPaths = [
-      new Path2D("M23.6667 52.8333H25.75M25.75 52.8333H40.3333M25.75 52.8333V46.5833H38.25M40.3333 52.8333H42.4167M40.3333 52.8333V46.5833H38.25M38.25 46.5833V38.25M38.25 38.25V29.5417C38.2497 29.0602 38.0827 28.5937 37.7773 28.2215C37.472 27.8493 37.0471 27.5944 36.575 27.5L27.8333 25.75L23.6667 17.4167M38.25 38.25L42.4167 34.0833M27.8333 46.5833V37.2083M27.8333 37.2083V36.1667L23.6667 32V17.4167M27.8333 37.2083L37.2083 27.8333M23.6667 17.4167H22.625M23.6667 17.4167H24.7083M35.1083 25.75C35.7583 24.9875 36.1667 23.8687 36.1667 22.625C36.1667 20.3229 34.7667 18.4583 33.0417 18.4583C31.3167 18.4583 29.9167 20.3229 29.9167 22.625C29.9167 23.8687 30.325 24.9875 30.975 25.75"),
-      new Path2D("M34.0833 16.375C34.0833 16.6513 33.9736 16.9162 33.7782 17.1116C33.5829 17.3069 33.3179 17.4167 33.0416 17.4167C32.7654 17.4167 32.5004 17.3069 32.3051 17.1116C32.1097 16.9162 32 16.6513 32 16.375C32 15.8 32.7979 13.25 33.0416 13.25C33.2854 13.25 34.0833 15.8 34.0833 16.375ZM37.5896 17.7896C37.5217 17.909 37.4308 18.0138 37.3222 18.098C37.2137 18.1821 37.0895 18.244 36.9569 18.28C36.8244 18.316 36.686 18.3254 36.5498 18.3077C36.4135 18.29 36.2821 18.2455 36.1632 18.1768C36.0442 18.1081 35.94 18.0166 35.8566 17.9075C35.7731 17.7983 35.7121 17.6738 35.677 17.541C35.6418 17.4082 35.6333 17.2697 35.652 17.1336C35.6706 16.9975 35.7159 16.8664 35.7854 16.7479C36.0729 16.2479 38.0396 14.4396 38.25 14.5604C38.4604 14.6854 37.8771 17.2896 37.5896 17.7896ZM28.4937 17.7896C28.5616 17.909 28.6525 18.0138 28.761 18.098C28.8696 18.1821 28.9938 18.244 29.1263 18.28C29.2589 18.316 29.3973 18.3254 29.5335 18.3077C29.6698 18.29 29.8011 18.2455 29.9201 18.1768C30.0391 18.1081 30.1433 18.0166 30.2267 17.9075C30.3102 17.7983 30.3712 17.6738 30.4063 17.541C30.4414 17.4082 30.4499 17.2697 30.4313 17.1336C30.4127 16.9975 30.3674 16.8664 30.2979 16.7479C30.0104 16.2479 28.0437 14.4396 27.8333 14.5604C27.6208 14.6854 28.2062 17.2896 28.4937 17.7896ZM25.75 12.2083C25.75 12.7609 25.5305 13.2908 25.1398 13.6815C24.7491 14.0722 24.2192 14.2917 23.6666 14.2917C23.1141 14.2917 22.5842 14.0722 22.1935 13.6815C21.8028 13.2908 21.5833 12.7609 21.5833 12.2083C21.5833 11.0583 23.3416 8.04166 23.6666 8.04166C23.9916 8.04166 25.75 11.0583 25.75 12.2083Z"),
-    ];
+    const pisaTowerPaths = PISA_TOWER_SVG_PATHS.map((path) => new Path2D(path));
+    const statueOfLibertyPaths = STATUE_OF_LIBERTY_SVG_PATHS.map((path) => new Path2D(path));
 
     const drawLandmarkSilhouettes = (_altitude: number, isBreak: boolean) => {
       const smallRadius = 22.5 * 0.35;
@@ -2073,6 +1576,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       if (!pageHidden
         && isSupplyRunningRef.current
         && !debugUfoModeRef.current
+        && !octopusEvent
         && ufoEvents.length === 0
         && birdDeliveries.length === 0
         && balloonEvents.length === 0
@@ -2111,6 +1615,26 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       if (altitude !== lastReportedAltitude) {
         lastReportedAltitude = altitude;
         altitudeChangeRef.current(altitude);
+      }
+      const highAltitudeEventBand = altitude >= ALIEN_EVENT_ALTITUDE;
+      const rocketEligible = altitude >= SPACE_EVENT_ALTITUDE;
+      if (highAltitudeEventBand !== previousHighAltitudeEventBand) {
+        previousHighAltitudeEventBand = highAltitudeEventBand;
+        const eventInterval = highAltitudeEventBand
+          ? HIGH_ALTITUDE_EVENT_INTERVAL_MS
+          : LOW_ALTITUDE_EVENT_INTERVAL_MS;
+        nextUfoCheckAt = ufoNow + eventInterval;
+        if (rocketEligible) nextRocketCheckAt = ufoNow + eventInterval;
+      }
+      if (rocketEligible !== previousRocketEligible) {
+        previousRocketEligible = rocketEligible;
+        if (rocketEligible) {
+          nextRocketCheckAt = ufoNow + (
+            highAltitudeEventBand
+              ? HIGH_ALTITUDE_EVENT_INTERVAL_MS
+              : LOW_ALTITUDE_EVENT_INTERVAL_MS
+          );
+        }
       }
       if (altitude < AURORA_EVENT_ALTITUDE) {
         auroraEvent = null;
@@ -2266,8 +1790,16 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         const toX = delivery.direction === 1 ? bounds.right + routeMargin : bounds.left - routeMargin;
         const x = fromX + (toX - fromX) * progress;
         // Convert the measured toolbar-safe screen position into current world coordinates.
-        const y = bounds.top + (height * 0.25) / currentScale.current;
+        const carrierYRatio = delivery.vehicle === "satellite"
+          ? delivery.satelliteStartYRatio
+            + (delivery.satelliteEndYRatio - delivery.satelliteStartYRatio) * progress
+          : 0.25;
+        const y = bounds.top + (height * carrierYRatio) / currentScale.current;
         const birdSize = 24 / currentScale.current;
+        const carrierSize = delivery.vehicle === "satellite" ? 136 / currentScale.current : birdSize;
+        const dropAnchorOffset = delivery.vehicle === "satellite"
+          ? carrierSize * 0.18
+          : carrierSize * 0.62;
         if (!delivery.released && progress >= delivery.releaseAt) {
           delivery.released = true;
           const dropCount = activeBuffsRef.current.doubleDrop ? 2 : 1;
@@ -2276,7 +1808,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
             createTomato(
               delivery.golden,
               false,
-              { x: x + dropOffset, y: y + birdSize * 0.62 + delivery.radius },
+              { x: x + dropOffset, y: y + dropAnchorOffset + delivery.radius },
               delivery.radius,
               delivery.isSquishy,
             );
@@ -2284,7 +1816,33 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
             if (dropIndex > 0) bonusTomatoRef.current(delivery.golden);
           }
         }
-        if (delivery.vehicle === "plane") {
+        if (delivery.vehicle === "satellite") {
+          if (ufoNow >= delivery.nextRadioAt) {
+            delivery.radioPulseStartedAt = ufoNow - delivery.startedAt;
+            delivery.nextRadioAt = ufoNow + 2_000 + Math.random() * 3_000;
+          }
+          drawSatellite(
+            x,
+            y,
+            carrierSize,
+            delivery.direction,
+            ufoNow - delivery.startedAt,
+            delivery.duration * delivery.releaseAt,
+            delivery.initialRotation,
+            delivery.radioPulseStartedAt,
+          );
+          if (!delivery.released) {
+            drawTomato(
+              context,
+              x,
+              y + dropAnchorOffset + delivery.radius,
+              delivery.radius,
+              delivery.golden,
+              0,
+              delivery.isSquishy,
+            );
+          }
+        } else if (delivery.vehicle === "plane") {
           if (ufoNow >= delivery.nextContrailAt) {
             const particleScale = Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
             const tailX = x - delivery.direction * birdSize * 1.42;
@@ -2324,6 +1882,35 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           );
         }
         if (progress >= 1) birdDeliveries.splice(index, 1);
+      }
+      if (!pageHidden
+        && !debugUfoModeRef.current
+        && !octopusEvent
+        && isFocusRunningRef.current
+        && currentAltitude >= SPACE_EVENT_ALTITUDE
+        && ufoNow >= nextRocketCheckAt) {
+        nextRocketCheckAt = ufoNow + (
+          currentAltitude >= ALIEN_EVENT_ALTITUDE
+            ? HIGH_ALTITUDE_EVENT_INTERVAL_MS
+            : LOW_ALTITUDE_EVENT_INTERVAL_MS
+        );
+        const rocketActive = balloonEvents.some((event) => event.vehicle === "rocket");
+        const rocketChance = activeBuffsRef.current.balloonBoost
+          ? ROCKET_APPEARANCE_CHANCE * 2
+          : ROCKET_APPEARANCE_CHANCE;
+        if (!rocketActive && Math.random() < rocketChance) {
+          const startedAt = ufoNow;
+          balloonEvents.push({
+            startedAt,
+            duration: 13_000 + Math.random() * 2_000,
+            direction: Math.random() < 0.5 ? 1 : -1,
+            initialGolden: Math.random() < getGoldenChance(),
+            initialDropPending: true,
+            enteredViewport: false,
+            nextDropAt: startedAt,
+            vehicle: "rocket",
+          });
+        }
       }
       for (let index = balloonEvents.length - 1; index >= 0; index--) {
         const balloon = balloonEvents[index];
@@ -2386,7 +1973,11 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
       if (previousDebugUfoMode !== debugUfoModeRef.current) {
         previousDebugUfoMode = debugUfoModeRef.current;
         if (!previousDebugUfoMode) {
-          nextUfoCheckAt = ufoNow + UFO_CHECK_INTERVAL_MS;
+          nextUfoCheckAt = ufoNow + (
+            currentAltitude >= ALIEN_EVENT_ALTITUDE
+              ? HIGH_ALTITUDE_EVENT_INTERVAL_MS
+              : LOW_ALTITUDE_EVENT_INTERVAL_MS
+          );
           if (ufoEvents.length > 1) ufoEvents.splice(1);
         }
       }
@@ -2424,11 +2015,13 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
           });
         }
       } else if (!pageHidden && isFocusRunningRef.current && ufoNow >= nextUfoCheckAt) {
-        nextUfoCheckAt = ufoNow + UFO_CHECK_INTERVAL_MS;
-        const otherAirEventActive = birdDeliveries.length > 0 || balloonEvents.length > 0;
+        nextUfoCheckAt = ufoNow + (
+          currentAltitude >= ALIEN_EVENT_ALTITUDE
+            ? HIGH_ALTITUDE_EVENT_INTERVAL_MS
+            : LOW_ALTITUDE_EVENT_INTERVAL_MS
+        );
         if (isUfoUnlockedRef.current
           && ufoEvents.length === 0
-          && !otherAirEventActive
           && Math.random() < UFO_APPEARANCE_CHANCE) {
           const entryDuration = 2200;
           const startedAt = ufoNow;
@@ -2536,7 +2129,119 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, Props>(function Phy
         }
 
         drawUfo(x, y, ufoSize);
-        if (elapsed >= eventEnd) ufoEvents.splice(index, 1);
+        if (elapsed >= eventEnd) {
+          ufoEvents.splice(index, 1);
+          if (ufoEvents.length === 0 && !debugUfoModeRef.current) {
+            nextUfoCheckAt = Math.min(nextUfoCheckAt, ufoNow);
+          }
+        }
+      }
+
+      if (!pageHidden
+        && !debugUfoModeRef.current
+        && isFocusRunningRef.current
+        && isOctopusUnlockedRef.current
+        && !octopusEvent
+        && ufoNow >= nextOctopusCheckAt) {
+        nextOctopusCheckAt = ufoNow + OCTOPUS_CHECK_INTERVAL_MS;
+        if (Math.random() < OCTOPUS_APPEARANCE_CHANCE) {
+          for (const delivery of birdDeliveries) {
+            if (!delivery.released) deferredDeliveries.push(delivery.golden);
+          }
+          for (const balloon of balloonEvents) {
+            if (balloon.initialDropPending) deferredDeliveries.push(balloon.initialGolden);
+          }
+          birdDeliveries.length = 0;
+          balloonEvents.length = 0;
+          const startedAt = ufoNow;
+          const direction: 1 | -1 = Math.random() < 0.5 ? 1 : -1;
+          octopusEvent = {
+            startedAt,
+            duration: 15_000,
+            entryDuration: 1_600,
+            exitDuration: 1_600,
+            direction,
+            nextDropAt: startedAt + 1_800,
+            phase1: Math.random() * Math.PI * 2,
+            phase2: Math.random() * Math.PI * 2,
+            speed1: 0.00065 + Math.random() * 0.00045,
+            speed2: 0.0015 + Math.random() * 0.0009,
+            amplitude1: 12 + Math.random() * 11,
+            amplitude2: 5 + Math.random() * 7,
+            currentYRatio: 0.22 + Math.random() * 0.06,
+            targetYRatio: 0.20 + Math.random() * 0.10,
+            nextYTargetAt: startedAt + 2_000 + Math.random() * 2_000,
+            yLerpFactor: 0.008 + Math.random() * 0.012,
+            nextBlinkAt: startedAt + 3_000 + Math.random() * 2_000,
+            blinkUntil: Number.NEGATIVE_INFINITY,
+          };
+        }
+      }
+
+      if (octopusEvent) {
+        const event = octopusEvent;
+        const elapsed = ufoNow - event.startedAt;
+        const hoverEnd = event.duration - event.exitDuration;
+        const routeMargin = 90 / currentScale.current;
+        const enterX = event.direction === 1 ? bounds.left - routeMargin : bounds.right + routeMargin;
+        const leaveX = event.direction === 1 ? bounds.right + routeMargin : bounds.left - routeMargin;
+        const centerX = (bounds.left + bounds.right) / 2;
+        const hoverRange = (bounds.right - bounds.left) * 0.30;
+        const organicX = (sampleTime: number) => centerX
+          + Math.sin(sampleTime * 0.00072 + event.phase1) * hoverRange * 0.72
+          + Math.sin(sampleTime * 0.00161 + event.phase2) * hoverRange * 0.28;
+        let x: number;
+        if (elapsed < event.entryDuration) {
+          const progress = Math.max(0, elapsed / event.entryDuration);
+          const eased = 1 - Math.pow(1 - progress, 3);
+          x = enterX + (organicX(0) - enterX) * eased;
+        } else if (elapsed < hoverEnd) {
+          x = organicX(elapsed - event.entryDuration);
+        } else {
+          const progress = Math.min(1, (elapsed - hoverEnd) / event.exitDuration);
+          x = organicX(hoverEnd - event.entryDuration)
+            + (leaveX - organicX(hoverEnd - event.entryDuration)) * progress * progress;
+        }
+        if (ufoNow >= event.nextYTargetAt) {
+          event.targetYRatio = 0.20 + Math.random() * 0.10;
+          event.nextYTargetAt = ufoNow + 2_000 + Math.random() * 2_000;
+        }
+        event.currentYRatio += (event.targetYRatio - event.currentYRatio) * event.yLerpFactor;
+        const verticalDrift = Math.sin(ufoNow * event.speed1 + event.phase1) * event.amplitude1
+          + Math.sin(ufoNow * event.speed2 + event.phase2) * event.amplitude2;
+        const octopusScreenY = Math.min(
+          height * 0.30,
+          Math.max(height * 0.18, height * event.currentYRatio + verticalDrift),
+        );
+        const y = bounds.top + octopusScreenY / currentScale.current;
+        const octopusSize = 96 / currentScale.current;
+        if (ufoNow >= event.nextBlinkAt) {
+          event.blinkUntil = ufoNow + 150;
+          event.nextBlinkAt = event.blinkUntil + 3_000 + Math.random() * 2_000;
+        }
+        const dropAreaMargin = (bounds.right - bounds.left) * 0.08;
+        const dropAreaLeft = bounds.left + dropAreaMargin;
+        const dropAreaRight = bounds.right - dropAreaMargin;
+        while (elapsed >= event.entryDuration
+          && elapsed < hoverEnd
+          && ufoNow >= event.nextDropAt) {
+          const spec = createTomatoSpec(true);
+          createTomato(
+            true,
+            false,
+            {
+              x: Math.min(dropAreaRight, Math.max(dropAreaLeft, x)),
+              y: y + octopusSize * 0.27 + spec.radius,
+            },
+            spec.radius,
+            false,
+          );
+          bonusTomatoRef.current(true);
+          goldenDropRef.current();
+          event.nextDropAt += 1_500 + Math.random() * 500;
+        }
+        drawOctopus(x, y, octopusSize, event.direction, ufoNow < event.blinkUntil);
+        if (elapsed >= event.duration) octopusEvent = null;
       }
 
       if (!pageHidden && altitude >= ALIEN_EVENT_ALTITUDE && ufoNow >= nextAlienCheckAt) {
