@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import Script from "next/script";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,6 +10,13 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ja">
+      <head>
+        <script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4715060765412439"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body>
         {children}
         <footer className="fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 z-[70] text-xs sm:left-4">
@@ -23,13 +27,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             プライバシーポリシー
           </Link>
         </footer>
-        <Analytics />
-        <SpeedInsights />
-        <Script
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4715060765412439"
-          crossOrigin="anonymous"
-          strategy="afterInteractive"
-        />
       </body>
     </html>
   );
