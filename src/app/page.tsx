@@ -5,6 +5,7 @@ import { Coffee, Disc3, FastForward, Gift, Pause, Pencil, Play, Repeat, RotateCc
 import { PhysicsCanvas, type PhysicsCanvasHandle } from "@/components/PhysicsCanvas";
 import { AdContainer } from "@/components/AdContainer";
 import { ShopModal } from "@/components/ShopModal";
+import { useDebugMode } from "@/hooks/useDebugMode";
 import { useTimer } from "@/hooks/useTimer";
 import { saveLocalStorage, useGameStorage } from "@/hooks/useGameStorage";
 import { CONFIG, type TomatoCounts, type TimerMode } from "@/lib/config";
@@ -18,10 +19,11 @@ import {
   SUPPLY_GOLDEN_CHANCE,
 } from "@/constants/assets";
 
-const button = "inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold transition hover:-translate-y-0.5 disabled:cursor-default disabled:opacity-40 disabled:hover:translate-y-0";
+const button = "inline-flex shrink-0 items-center justify-center gap-1 rounded-full px-2.5 py-2 text-xs font-bold transition hover:-translate-y-0.5 disabled:cursor-default disabled:opacity-40 disabled:hover:translate-y-0 sm:gap-1.5 sm:px-3 sm:text-sm";
 const quiet = `${button} bg-zinc-800 text-zinc-100 ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700`;
 
 export default function Home() {
+  const isDebugMode = useDebugMode();
   const physics = useRef<PhysicsCanvasHandle>(null);
   const [counts, setCounts] = useState<TomatoCounts>({ normal: 0, gold: 0 });
   const [goldenTomatoes, setGoldenTomatoes] = useState(0);
@@ -58,7 +60,7 @@ export default function Home() {
   });
   const awardTomato = useCallback(() => {
     if (document.hidden) return;
-    if (debugUfoMode) return;
+    if (isDebugMode && debugUfoMode) return;
     const baseGoldenChance = isBonusBreakMode ? BONUS_BREAK_GOLDEN_CHANCE : SUPPLY_GOLDEN_CHANCE;
     const goldenChance = activeBuffs.goldBoost ? baseGoldenChance * 2 : baseGoldenChance;
     const golden = Math.random() < goldenChance;
@@ -69,7 +71,7 @@ export default function Home() {
       return next;
     });
     physics.current?.drop(golden);
-  }, [activeBuffs.goldBoost, debugUfoMode, isBonusBreakMode]);
+  }, [activeBuffs.goldBoost, debugUfoMode, isBonusBreakMode, isDebugMode]);
   const recordBonusTomato = useCallback((golden: boolean) => {
     setCounts((current) => {
       const key = golden ? "gold" : "normal";
@@ -136,7 +138,7 @@ export default function Home() {
     clearBonusBreakState();
     setRewardOpen(true);
   }, [clearBonusBreakState]);
-  const timer = useTimer(awardTomato, handleSessionComplete);
+  const timer = useTimer(awardTomato, handleSessionComplete, isDebugMode);
   const pauseTomatoCycle = useCallback(() => {
     timer.pause();
   }, [timer.pause]);
@@ -168,6 +170,9 @@ export default function Home() {
     timerModeRef.current = timer.mode;
     if (timer.mode !== "break") clearBonusBreakState();
   }, [clearBonusBreakState, timer.mode]);
+  useEffect(() => {
+    if (!isDebugMode) setDebugUfoMode(false);
+  }, [isDebugMode]);
   useEffect(() => {
     if (timer.mode === "break" && timer.remaining === 0) clearBonusBreakState();
   }, [clearBonusBreakState, timer.mode, timer.remaining]);
@@ -240,18 +245,16 @@ export default function Home() {
   const modeClass = (mode: TimerMode) => `${button} ${timer.mode === mode
     ? mode === "break" ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"
     : isBreak ? "bg-white/80 text-neutral-800 ring-1 ring-inset ring-neutral-300" : "bg-neutral-800 text-neutral-300 ring-1 ring-inset ring-neutral-700"}`;
-  const isDevelopment = process.env.NODE_ENV === "development";
-
   return (
-    <main className={`flex h-[100dvh] w-screen items-center justify-center overflow-hidden p-2 transition-colors duration-700 sm:p-4 ${isBreak ? "bg-neutral-100 text-neutral-950" : "bg-neutral-950 text-white"}`}>
-      <div className="flex h-full w-full max-w-[1380px] items-center justify-center gap-4 overflow-hidden">
-        <section className={`relative isolate flex h-full max-h-[100dvh] w-full max-w-5xl flex-col justify-between overflow-hidden rounded-2xl border shadow-2xl transition-colors duration-700 ${isBreak ? "border-neutral-300 bg-neutral-50 shadow-neutral-400/30" : "border-neutral-800 bg-neutral-900 shadow-black/60"}`}>
+    <main className={`flex h-[100dvh] w-screen max-w-full items-center justify-center overflow-hidden p-2 transition-colors duration-700 sm:p-4 ${isBreak ? "bg-neutral-100 text-neutral-950" : "bg-neutral-950 text-white"}`}>
+      <div className="flex h-full min-w-0 w-full max-w-[1380px] items-center justify-center gap-4 overflow-hidden">
+        <section className={`relative isolate flex h-full min-w-0 w-full max-w-full max-h-[100dvh] sm:max-w-5xl flex-col justify-between overflow-hidden rounded-2xl border shadow-2xl transition-colors duration-700 ${isBreak ? "border-neutral-300 bg-neutral-50 shadow-neutral-400/30" : "border-neutral-800 bg-neutral-900 shadow-black/60"}`}>
           <div className={`pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 select-none whitespace-nowrap text-[clamp(5rem,20vw,14rem)] font-black leading-none tracking-[-0.07em] tabular-nums transition-colors duration-700 ${isBreak ? "text-neutral-900" : "text-white/90"}`}>{time}</div>
           <AdContainer
             variant="mobile"
             className="absolute inset-x-2 top-[4.5rem] z-20 h-[50px] md:hidden"
           />
-          <div className="absolute inset-x-0 bottom-0 top-[7.75rem] md:top-0">
+          <div className="absolute inset-x-0 bottom-0 top-[7.75rem] min-w-0 max-w-full overflow-hidden md:top-0">
             <PhysicsCanvas
               ref={physics}
               counts={counts}
@@ -261,7 +264,8 @@ export default function Home() {
               activeBuffs={activeBuffs}
               isUfoUnlocked={unlockedItems.ufo}
               isOctopusUnlocked={unlockedItems.octopus}
-              debugUfoMode={debugUfoMode}
+              isDebugMode={isDebugMode}
+              debugUfoMode={isDebugMode && debugUfoMode}
               isBonusBreakMode={isBonusBreakMode}
               timerMode={timer.mode}
               isTimerRunning={timer.running}
@@ -272,35 +276,39 @@ export default function Home() {
           <div className={`pointer-events-none absolute bottom-3 right-3 z-20 rounded-full border px-3 py-1.5 text-xs font-black tabular-nums backdrop-blur sm:bottom-5 sm:right-5 ${isBreak ? "border-neutral-300 bg-white/75 text-neutral-800" : "border-white/15 bg-neutral-950/60 text-white/80"}`}>
             {altitude.toLocaleString("ja-JP")} m
           </div>
-          <div data-control-toolbar className={`absolute inset-x-3 top-3 z-30 flex items-center justify-between gap-3 overflow-x-auto rounded-full border p-2 backdrop-blur transition-colors duration-700 sm:inset-x-6 sm:top-5 ${isBreak ? "border-neutral-300 bg-white/75" : "border-neutral-800/80 bg-neutral-950/65"}`}>
-            <div className="flex shrink-0 items-center gap-2">
+          <div data-control-toolbar className={`no-scrollbar absolute inset-x-3 top-3 z-30 flex min-w-0 max-w-full touch-pan-x items-center justify-start gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain rounded-full border p-1.5 backdrop-blur transition-colors duration-700 sm:inset-x-6 sm:top-5 sm:gap-2 sm:p-2 md:justify-between md:gap-3 ${isBreak ? "border-neutral-300 bg-white/75" : "border-neutral-800/80 bg-neutral-950/65"}`}>
+            <div className="flex shrink-0 items-center gap-1 sm:gap-2">
               <button className={modeClass("focus")} aria-label="集中 25分" title="集中 25分" onClick={() => selectTimerMode("focus")}><Pencil size={17} />25m</button>
               <button className={modeClass("break")} aria-label="休憩 5分" title="休憩 5分" onClick={() => selectTimerMode("break")}><Coffee size={17} />5m</button>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-1 sm:gap-2">
               <button className={`${button} ${isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} aria-label="開始" title="開始" disabled={timer.running} onClick={resumeTomatoCycle}><Play size={18} fill="currentColor" /></button>
               <button className={quietClass} aria-label="一時停止" title="一時停止" disabled={!timer.running} onClick={pauseTomatoCycle}><Pause size={18} /></button>
               <button className={quietClass} aria-label="リセット" title="リセット" onClick={resetTimer}><RotateCcw size={18} /></button>
               <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.autoLoopEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`自動切り替え ${timer.autoLoopEnabled ? "ON" : "OFF"}`} title="自動切り替え" aria-pressed={timer.autoLoopEnabled} onClick={timer.toggleAutoLoop}><Repeat size={18} /></button>
-              <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.debugEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`デバッグ ${timer.debugEnabled ? "ON" : "OFF"}`} title="デバッグ" aria-pressed={timer.debugEnabled} onClick={timer.toggleDebug}><Zap size={18} fill={timer.debugEnabled ? "currentColor" : "none"} /></button>
+              {isDebugMode && (
+                <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.debugEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`デバッグ ${timer.debugEnabled ? "ON" : "OFF"}`} title="デバッグ" aria-pressed={timer.debugEnabled} onClick={timer.toggleDebug}><Zap size={18} fill={timer.debugEnabled ? "currentColor" : "none"} /></button>
+              )}
               <button className={quietClass} aria-label="ショップを開く" title="ショップ" onClick={() => setShopOpen(true)}><Store size={18} /></button>
               <span className={`inline-flex items-center gap-1 rounded-full border border-amber-400/30 px-3 py-2 text-sm font-bold ${isBreak ? "bg-white/80 text-amber-700" : "bg-neutral-950/80 text-amber-300"}`} title="所持している金のトマト"><Sparkles size={16} />× {goldenTomatoes}</span>
-              <button
-                className={`${button} border ${debugUfoMode
-                  ? isBreak
-                    ? "border-cyan-500/70 bg-cyan-100 text-cyan-800"
-                    : "border-cyan-400/70 bg-cyan-400/10 text-cyan-200"
-                  : isBreak
-                    ? "border-neutral-300 bg-white/80 text-neutral-700"
-                    : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
-                aria-label={`UFOデバッグモード ${debugUfoMode ? "ON" : "OFF"}`}
-                title="UFOデバッグモード"
-                aria-pressed={debugUfoMode}
-                onClick={() => setDebugUfoMode((enabled) => !enabled)}
-              >
-                <Disc3 aria-hidden="true" className="text-sky-400" size={18} />
-              </button>
-              {isDevelopment && (
+              {isDebugMode && (
+                <button
+                  className={`${button} border ${debugUfoMode
+                    ? isBreak
+                      ? "border-cyan-500/70 bg-cyan-100 text-cyan-800"
+                      : "border-cyan-400/70 bg-cyan-400/10 text-cyan-200"
+                    : isBreak
+                      ? "border-neutral-300 bg-white/80 text-neutral-700"
+                      : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
+                  aria-label={`UFOデバッグモード ${debugUfoMode ? "ON" : "OFF"}`}
+                  title="UFOデバッグモード"
+                  aria-pressed={debugUfoMode}
+                  onClick={() => setDebugUfoMode((enabled) => !enabled)}
+                >
+                  <Disc3 aria-hidden="true" className="text-sky-400" size={18} />
+                </button>
+              )}
+              {isDebugMode && (
                 <button
                   className={`${button} border ${isBreak ? "border-violet-400/50 bg-violet-100 text-violet-700" : "border-violet-400/40 bg-violet-400/10 text-violet-300"}`}
                   aria-label="残り時間を10秒に短縮"

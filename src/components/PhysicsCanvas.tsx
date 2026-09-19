@@ -71,6 +71,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     activeBuffs,
     isUfoUnlocked,
     isOctopusUnlocked,
+    isDebugMode,
     debugUfoMode = false,
     isBonusBreakMode = false,
     timerMode,
@@ -94,6 +95,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
   const activeBuffsRef = useRef(activeBuffs);
   const isUfoUnlockedRef = useRef(isUfoUnlocked);
   const isOctopusUnlockedRef = useRef(isOctopusUnlocked);
+  const isDebugModeRef = useRef(isDebugMode);
   const debugUfoModeRef = useRef(debugUfoMode);
   const isBonusBreakModeRef = useRef(isBonusBreakMode);
   const isFocusRunningRef = useRef(timerMode === "focus" && isTimerRunning);
@@ -102,6 +104,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
   const breakModeRef = useRef(timerMode === "break");
   const themeDirtyRef = useRef(false);
   activeBuffsRef.current = activeBuffs;
+  isDebugModeRef.current = isDebugMode === true;
   isBonusBreakModeRef.current = isBonusBreakMode === true;
   breakModeRef.current = timerMode === "break";
 
@@ -114,6 +117,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
   useEffect(() => { activeBuffsRef.current = activeBuffs; }, [activeBuffs]);
   useEffect(() => { isUfoUnlockedRef.current = isUfoUnlocked; }, [isUfoUnlocked]);
   useEffect(() => { isOctopusUnlockedRef.current = isOctopusUnlocked; }, [isOctopusUnlocked]);
+  useEffect(() => { isDebugModeRef.current = isDebugMode; }, [isDebugMode]);
   useEffect(() => { debugUfoModeRef.current = debugUfoMode; }, [debugUfoMode]);
   useEffect(() => { isBonusBreakModeRef.current = isBonusBreakMode; }, [isBonusBreakMode]);
   useEffect(() => { altitudeChangeRef.current = onAltitudeChange; }, [onAltitudeChange]);
@@ -204,7 +208,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     let nextShootingStarCheckAt = ufoEventTime + SHOOTING_STAR_CHECK_INTERVAL_MS;
     let shootingStarEvent: ShootingStarEvent | null = null;
     let pageHidden = document.hidden;
-    let previousDebugUfoMode = debugUfoModeRef.current;
+    let previousDebugUfoMode = isDebugModeRef.current && debugUfoModeRef.current;
     let coreEvaluationFrame = 0;
     let terrainEvaluationFrame = 0;
     let archivedHighestPoint = Number.POSITIVE_INFINITY;
@@ -240,6 +244,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       image.onload = () => { imageReady = true; };
       image.src = CONFIG.tomatoImageUrl;
     }
+    const isUfoDebugActive = () => isDebugModeRef.current && debugUfoModeRef.current;
 
     const handleVisibilityChange = () => {
       pageHidden = document.hidden;
@@ -553,6 +558,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       body?: Matter.Body,
       phase = lastPhysicsPhase,
     ) => {
+      if (!isDebugModeRef.current) return;
       const timestamp = performance.now();
       const diagnosticKey = `${reason}:${body?.id ?? "world"}`;
       const previousLogTime = diagnosticLogTimes.get(diagnosticKey) ?? Number.NEGATIVE_INFINITY;
@@ -631,6 +637,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     };
 
     const drawPhysicsDiagnosticOverlay = () => {
+      if (!isDebugModeRef.current) {
+        diagnosticAlert = null;
+        return;
+      }
       if (!diagnosticAlert) return;
       const lines = [
         "PHYSICS ANOMALY DETECTED",
@@ -891,7 +901,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
 
     const startDelivery = (golden = false) => {
       if (pageHidden) return;
-      if (debugUfoModeRef.current) return;
+      if (isUfoDebugActive()) return;
       const useSpaceVehicles = currentAltitude >= SPACE_EVENT_ALTITUDE;
       const useSatellite = currentAltitude >= ALIEN_EVENT_ALTITUDE;
       const balloonChance = activeBuffsRef.current.balloonBoost ? 0.02 : 0.01;
@@ -934,7 +944,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     const queueBirdDelivery = (golden = false) => {
       if (pageHidden) return;
       if (!isSupplyRunningRef.current) return;
-      if (debugUfoModeRef.current) return;
+      if (isUfoDebugActive()) return;
       if (ufoEvents.length > 0 || octopusEvent) {
         deferredDeliveries.push(golden);
         return;
@@ -1575,7 +1585,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       }
       if (!pageHidden
         && isSupplyRunningRef.current
-        && !debugUfoModeRef.current
+        && !isUfoDebugActive()
         && !octopusEvent
         && ufoEvents.length === 0
         && birdDeliveries.length === 0
@@ -1884,7 +1894,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         if (progress >= 1) birdDeliveries.splice(index, 1);
       }
       if (!pageHidden
-        && !debugUfoModeRef.current
+        && !isUfoDebugActive()
         && !octopusEvent
         && isFocusRunningRef.current
         && currentAltitude >= SPACE_EVENT_ALTITUDE
@@ -1970,8 +1980,9 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         if (progress >= 1) balloonEvents.splice(index, 1);
       }
 
-      if (previousDebugUfoMode !== debugUfoModeRef.current) {
-        previousDebugUfoMode = debugUfoModeRef.current;
+      const currentDebugUfoMode = isUfoDebugActive();
+      if (previousDebugUfoMode !== currentDebugUfoMode) {
+        previousDebugUfoMode = currentDebugUfoMode;
         if (!previousDebugUfoMode) {
           nextUfoCheckAt = ufoNow + (
             currentAltitude >= ALIEN_EVENT_ALTITUDE
@@ -1982,7 +1993,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         }
       }
 
-      if (!pageHidden && debugUfoModeRef.current && isFocusRunningRef.current) {
+      if (!pageHidden && isUfoDebugActive() && isFocusRunningRef.current) {
         birdDeliveries.length = 0;
         balloonEvents.length = 0;
         deferredDeliveries.length = 0;
@@ -2131,14 +2142,14 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         drawUfo(x, y, ufoSize);
         if (elapsed >= eventEnd) {
           ufoEvents.splice(index, 1);
-          if (ufoEvents.length === 0 && !debugUfoModeRef.current) {
+          if (ufoEvents.length === 0 && !isUfoDebugActive()) {
             nextUfoCheckAt = Math.min(nextUfoCheckAt, ufoNow);
           }
         }
       }
 
       if (!pageHidden
-        && !debugUfoModeRef.current
+        && !isUfoDebugActive()
         && isFocusRunningRef.current
         && isOctopusUnlockedRef.current
         && !octopusEvent
@@ -2310,5 +2321,5 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated]);
 
-  return <div ref={containerRef} className="pointer-events-none absolute inset-0 z-10"><canvas ref={canvasRef} className="h-full w-full" /></div>;
+  return <div ref={containerRef} className="pointer-events-none absolute inset-0 z-10 min-w-0 max-w-full overflow-hidden"><canvas ref={canvasRef} className="block h-full w-full max-w-full" /></div>;
 });

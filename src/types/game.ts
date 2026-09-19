@@ -13,6 +13,7 @@ export type PhysicsCanvasProps = {
   activeBuffs: { doubleDrop: boolean; balloonBoost: boolean; goldBoost: boolean };
   isUfoUnlocked: boolean;
   isOctopusUnlocked: boolean;
+  isDebugMode: boolean;
   debugUfoMode?: boolean;
   isBonusBreakMode?: boolean;
   timerMode: "focus" | "break";

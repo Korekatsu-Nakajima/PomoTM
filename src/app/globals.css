@@ -4,3 +4,5 @@ html, body { width: 100%; height: 100%; overflow: hidden; }
 body { margin: 0; }
 button { cursor: pointer; }
 button:disabled { cursor: default; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
