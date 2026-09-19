@@ -55,6 +55,7 @@ export function useTimer(onTomato: () => void, onSessionComplete?: () => void) {
           if (nextMode === "focus") scheduleFocus();
           if (debugRef.current && nextMode === "focus") debugDrop.current = setInterval(() => tomatoRef.current(), CONFIG.debugDropInterval);
         } else {
+          modeRef.current = "focus"; setMode("focus"); setRemaining(CONFIG.durations.focus);
           runningRef.current = false; setRunning(false);
           if (timer.current) clearInterval(timer.current); timer.current = null;
         }
@@ -65,6 +66,11 @@ export function useTimer(onTomato: () => void, onSessionComplete?: () => void) {
   }, [scheduleFocus, stopDrops]);
   const selectMode = useCallback((next: TimerMode) => { pause(); modeRef.current = next; setMode(next); setRemaining(CONFIG.durations[next]); }, [pause]);
   const reset = useCallback(() => { pause(); setRemaining(CONFIG.durations[modeRef.current]); }, [pause]);
+  const setRemainingSeconds = useCallback((seconds: number) => {
+    const next = Math.max(0, Math.floor(seconds));
+    setRemaining(next);
+    if (runningRef.current) deadline.current = Date.now() + next * 1_000;
+  }, []);
   const toggleDebug = useCallback(() => {
     const enabled = !debugRef.current; debugRef.current = enabled; setDebugEnabled(enabled);
     if (debugDrop.current) clearInterval(debugDrop.current); debugDrop.current = null;
@@ -77,6 +83,6 @@ export function useTimer(onTomato: () => void, onSessionComplete?: () => void) {
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); stopDrops(); }, [stopDrops]);
   return {
     mode, remaining, running, debugEnabled, autoLoopEnabled,
-    start, pause, reset, selectMode, toggleDebug, toggleAutoLoop,
+    start, pause, reset, setRemainingSeconds, selectMode, toggleDebug, toggleAutoLoop,
   };
 }

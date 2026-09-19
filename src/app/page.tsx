@@ -3,8 +3,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Coffee, Orbit, Pause, Pencil, Play, Repeat, RotateCcw, Sparkles, Store, X, Zap } from "lucide-react";
 import { PhysicsCanvas, type PhysicsCanvasHandle } from "@/components/PhysicsCanvas";
+import { AdContainer } from "@/components/AdContainer";
+import { ShopModal } from "@/components/ShopModal";
 import { useTimer } from "@/hooks/useTimer";
+import { saveLocalStorage, useGameStorage } from "@/hooks/useGameStorage";
 import { CONFIG, type TomatoCounts, type TimerMode } from "@/lib/config";
+import type { ActiveBuffs, BuffKey, BuffRemaining, UnlockedItems } from "@/types/game";
+import {
+  BUFF_DURATION_SECONDS,
+  BONUS_BREAK_GOLDEN_CHANCE,
+  INITIAL_BUFF_REMAINING,
+  INITIAL_BUFFS,
+  INITIAL_UNLOCKED_ITEMS,
+  SUPPLY_GOLDEN_CHANCE,
+} from "@/constants/assets";
 
 const button = "pointer-events-auto relative z-20 inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-full p-2 text-sm font-bold transition hover:-translate-y-0.5 disabled:cursor-default disabled:opacity-40 disabled:hover:translate-y-0 sm:p-3";
 const quiet = `${button} bg-zinc-800 text-zinc-100 ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700`;
@@ -42,34 +54,44 @@ export default function Home() {
     localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify({ goldenTomatoes, activeBuffs, unlockedItems }));
   }, [activeBuffs, goldenTomatoes, hydrated, unlockedItems]);
   const awardTomato = useCallback(() => {
-    const golden = Math.random() < CONFIG.goldenChance;
+    if (document.hidden) return;
+    if (debugUfoMode) return;
+    const baseGoldenChance = isBonusBreakMode ? BONUS_BREAK_GOLDEN_CHANCE : SUPPLY_GOLDEN_CHANCE;
+    const goldenChance = activeBuffs.goldBoost ? baseGoldenChance * 2 : baseGoldenChance;
+    const golden = Math.random() < goldenChance;
     setCounts((current) => {
       const key = golden ? "gold" : "normal";
       const next = { ...current, [key]: current[key] + 1 };
-      localStorage.setItem(CONFIG.storageKey, JSON.stringify(next));
+      saveLocalStorage(CONFIG.storageKey, next);
       return next;
     });
     physics.current?.drop(golden);
-  }, []);
+  }, [activeBuffs.goldBoost, debugUfoMode, isBonusBreakMode]);
   const recordBonusTomato = useCallback((golden: boolean) => {
     setCounts((current) => {
       const key = golden ? "gold" : "normal";
       const next = { ...current, [key]: current[key] + 1 };
-      localStorage.setItem(CONFIG.storageKey, JSON.stringify(next));
+      saveLocalStorage(CONFIG.storageKey, next);
       return next;
     });
   }, []);
   const recordGoldenTomatoDrop = useCallback(() => {
     setGoldenTomatoes((current) => current + 1);
+    setTotalGoldTomatoes((current) => current + 1);
+  }, []);
+  const recordAltitude = useCallback((nextAltitude: number) => {
+    setAltitude(nextAltitude);
+    setMaxAltitude((current) => Math.max(current, nextAltitude));
   }, []);
   const activateBuff = (key: BuffKey, cost: number) => {
     if (activeBuffs[key] || goldenTomatoes < cost) return;
     physics.current?.removeGolden(cost);
     setGoldenTomatoes((current) => current - cost);
     setActiveBuffs((current) => ({ ...current, [key]: true }));
+    setBuffRemaining((current) => ({ ...current, [key]: BUFF_DURATION_SECONDS }));
     setCounts((current) => {
       const next = { ...current, gold: Math.max(0, current.gold - cost) };
-      localStorage.setItem(CONFIG.storageKey, JSON.stringify(next));
+      saveLocalStorage(CONFIG.storageKey, next);
       return next;
     });
   };
@@ -91,6 +113,7 @@ export default function Home() {
   const timer = useTimer(awardTomato, expireSessionBuffs);
   const isBreak = timer.mode === "break";
   const time = `${String(Math.floor(timer.remaining / 60)).padStart(2, "0")}:${String(timer.remaining % 60).padStart(2, "0")}`;
+  const isBreak = timer.mode === "break";
   useEffect(() => { document.title = `${time} · ${timer.mode === "focus" ? "集中" : "休憩"}`; }, [time, timer.mode]);
   const quietClass = isBreak ? `${button} bg-white/80 text-zinc-800 ring-1 ring-inset ring-zinc-300 hover:bg-white` : quiet;
   const modeClass = (mode: TimerMode) => `${button} ${timer.mode === mode ? "bg-red-500 text-zinc-950" : isBreak ? "bg-white/80 text-zinc-700 ring-1 ring-inset ring-zinc-300" : "bg-zinc-800 text-zinc-300 ring-1 ring-inset ring-zinc-700"}`;
@@ -123,7 +146,6 @@ export default function Home() {
             <button className={quietClass} aria-label="ショップを開く" title="ショップ" onClick={() => setShopOpen(true)}><Store size={18} /></button>
             <span className={`inline-flex items-center gap-1 rounded-full border border-amber-400/30 px-3 py-2 text-sm font-bold ${isBreak ? "bg-white/80 text-amber-700" : "bg-zinc-950/80 text-amber-300"}`} title="所持している金のトマト"><Sparkles size={16} />× {goldenTomatoes}</span>
           </div>
-        </div>
 
         {shopOpen && (
           <div className={`pointer-events-auto fixed inset-0 z-50 flex cursor-pointer items-center justify-center bg-black/50 p-4 backdrop-blur-sm ${isBreak ? "bg-zinc-200/75" : "bg-zinc-950/75"}`} role="presentation" onMouseDown={() => setShopOpen(false)}>

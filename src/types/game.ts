@@ -1,0 +1,203 @@
+import type { TomatoCounts } from "@/lib/config";
+
+export type PhysicsCanvasHandle = {
+  drop: (golden: boolean) => void;
+  removeGolden: (count: number) => number;
+};
+
+export type PhysicsCanvasProps = {
+  counts: TomatoCounts;
+  hydrated: boolean;
+  onBonusTomato: (golden: boolean) => void;
+  onGoldenTomatoDrop: () => void;
+  activeBuffs: { doubleDrop: boolean; balloonBoost: boolean; goldBoost: boolean };
+  isUfoUnlocked: boolean;
+  isOctopusUnlocked: boolean;
+  debugUfoMode?: boolean;
+  isBonusBreakMode?: boolean;
+  timerMode: "focus" | "break";
+  isTimerRunning: boolean;
+  initialMaxAltitude?: number;
+  onAltitudeChange: (altitude: number) => void;
+};
+
+export type CameraBounds = { left: number; right: number; top: number; bottom: number };
+export type BirdDelivery = {
+  startedAt: number;
+  duration: number;
+  releaseAt: number;
+  direction: 1 | -1;
+  golden: boolean;
+  radius: number;
+  isSquishy: boolean;
+  released: boolean;
+  vehicle: "bird" | "plane" | "satellite";
+  nextContrailAt: number;
+  initialRotation: number;
+  nextRadioAt: number;
+  radioPulseStartedAt: number;
+  satelliteStartYRatio: number;
+  satelliteEndYRatio: number;
+};
+export type TomatoSpec = { golden: boolean; radius: number; isSquishy: boolean };
+export type TomatoBodyData = {
+  golden: boolean;
+  radius: number;
+  createdAt: number;
+  hasSettled: boolean;
+  isSquishy: boolean;
+  hasBurst: boolean;
+  pressureFrames: number;
+  pressureLoad: number;
+  ripeness: number;
+  invincibleUntil: number;
+  isDud: boolean;
+  isInfected: boolean;
+  burstAt: number;
+  baseRestitution: number;
+  baseFriction: number;
+};
+export type JuiceParticle = {
+  x: number;
+  y: number;
+  velocityX: number;
+  velocityY: number;
+  radius: number;
+  life: number;
+  maxLife: number;
+};
+export type ContrailParticle = {
+  x: number;
+  y: number;
+  radius: number;
+  alpha: number;
+  life: number;
+  maxLife: number;
+};
+export type BalloonEvent = {
+  startedAt: number;
+  duration: number;
+  direction: 1 | -1;
+  initialGolden: boolean;
+  initialDropPending: boolean;
+  enteredViewport: boolean;
+  nextDropAt: number;
+  vehicle: "balloon" | "rocket";
+};
+export type UfoEvent = {
+  startedAt: number;
+  hoverDuration: number;
+  entryDuration: number;
+  exitDuration: number;
+  direction: 1 | -1;
+  nextDropAt: number;
+  hoverPhase: number;
+  horizontalHoverSpeed: number;
+  horizontalPhase2: number;
+  horizontalHoverSpeed2: number;
+  phaseOffset: number;
+  hoverSpeed: number;
+  hoverAmplitude: number;
+  phaseOffset2: number;
+  hoverSpeed2: number;
+  hoverAmplitude2: number;
+  verticalOffset: number;
+  currentYRatio: number;
+  targetYRatio: number;
+  nextYTargetAt: number;
+  yLerpFactor: number;
+};
+export type OctopusEvent = {
+  startedAt: number;
+  duration: number;
+  entryDuration: number;
+  exitDuration: number;
+  direction: 1 | -1;
+  nextDropAt: number;
+  phase1: number;
+  phase2: number;
+  speed1: number;
+  speed2: number;
+  amplitude1: number;
+  amplitude2: number;
+  currentYRatio: number;
+  targetYRatio: number;
+  nextYTargetAt: number;
+  yLerpFactor: number;
+  nextBlinkAt: number;
+  blinkUntil: number;
+};
+export type AlienEvent = {
+  startedAt: number;
+  duration: number;
+  direction: 1 | -1;
+  phase1: number;
+  phase2: number;
+  speed1: number;
+  speed2: number;
+  amplitude1: number;
+  amplitude2: number;
+};
+export type StarParticle = {
+  normalizedX: number;
+  normalizedY: number;
+  radius: number;
+  alpha: number;
+  twinkleSpeed: number;
+  phase: number;
+  layer: 0 | 1 | 2;
+  horizontalSpeed: number;
+};
+export type AuroraEvent = {
+  startedAt: number;
+  fadeInDuration: number;
+  holdDuration: number;
+  fadeOutDuration: number;
+  direction: 1 | -1;
+  phase: number;
+};
+export type ShootingStarEvent = {
+  startedAt: number;
+  duration: number;
+  startXRatio: number;
+  startYRatio: number;
+  direction: 1 | -1;
+  travelXRatio: number;
+  travelYRatio: number;
+};
+export type PhysicsDiagnosticAlert = {
+  title: string;
+  detail: string;
+  phase: string;
+  timestamp: number;
+};
+export type SavedCameraState = { scale: number; offsetY: number };
+export type BuffKey = "doubleDrop" | "balloonBoost" | "goldBoost";
+export type ActiveBuffs = Record<BuffKey, boolean>;
+export type BuffRemaining = Record<BuffKey, number>;
+export type UnlockedItems = { ufo: boolean; bird: boolean; balloon: boolean; octopus: boolean };
+export type ShopItemProps = {
+  title: string;
+  description: string;
+  cost: number;
+  active: boolean;
+  remainingSeconds: number;
+  affordable: boolean;
+  onActivate: () => void;
+  light: boolean;
+};
+export type AdBannerSlotProps = { variant: "desktop" | "mobile"; className: string };
+export type ShopModalProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  goldTomatoCount: number;
+  isUfoUnlocked: boolean;
+  isOctopusUnlocked: boolean;
+  currentAltitude: number;
+  activeBuffs: ActiveBuffs;
+  buffRemaining: BuffRemaining;
+  onPurchaseItem: (key: BuffKey, cost: number) => void;
+  onUnlockUfo: () => void;
+  onUnlockOctopus: () => void;
+  isBreak: boolean;
+};

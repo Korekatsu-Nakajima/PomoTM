@@ -1,0 +1,96 @@
+"use client";
+
+import { Disc3, Radio, Sparkles, Store, X } from "lucide-react";
+import type { ShopItemProps, ShopModalProps } from "@/types/game";
+import { formatBuffTime } from "@/utils/gameUtils";
+
+const button = "inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold transition hover:-translate-y-0.5 disabled:cursor-default disabled:opacity-40 disabled:hover:translate-y-0";
+
+export function ShopModal({
+  isOpen,
+  onClose,
+  goldTomatoCount,
+  isUfoUnlocked,
+  isOctopusUnlocked,
+  currentAltitude,
+  activeBuffs,
+  buffRemaining,
+  onPurchaseItem,
+  onUnlockUfo,
+  onUnlockOctopus,
+  isBreak,
+}: ShopModalProps) {
+  if (!isOpen) return null;
+  const quietClass = isBreak
+    ? `${button} bg-white/80 text-neutral-900 ring-1 ring-inset ring-neutral-300 hover:bg-white`
+    : `${button} bg-zinc-800 text-zinc-100 ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700`;
+
+  return (
+    <div className={`absolute inset-0 z-50 grid place-items-center p-4 backdrop-blur-sm ${isBreak ? "bg-neutral-200/75" : "bg-neutral-950/75"}`} role="presentation" onMouseDown={onClose}>
+      <section className={`w-full max-w-lg rounded-3xl border p-6 shadow-2xl ${isBreak ? "border-neutral-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900"}`} role="dialog" aria-modal="true" aria-labelledby="shop-title" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="mb-6 flex items-center justify-between gap-4">
+          <div>
+            <h2 id="shop-title" className="flex items-center gap-2 text-xl font-black"><Store className={isBreak ? "text-emerald-500" : "text-red-500"} />アイテム交換所</h2>
+            <p className={`mt-1 text-sm ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>金トマトをアイテムと交換できます</p>
+          </div>
+          <button className={quietClass} aria-label="ショップを閉じる" onClick={onClose}><X size={18} /></button>
+        </header>
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <div className={`inline-flex items-center gap-2 rounded-full border border-amber-400/30 px-4 py-2 font-bold ${isBreak ? "bg-neutral-100 text-amber-700" : "bg-neutral-950 text-amber-300"}`}><Sparkles size={18} />所持 × {goldTomatoCount}</div>
+          {isUfoUnlocked ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/70 bg-emerald-400/15 px-4 py-2 text-xs font-black tracking-wide text-emerald-300"><Radio size={17} />UFO UNLOCKED</span>
+          ) : (
+            <button className={`${button} bg-sky-400 text-zinc-950`} disabled={goldTomatoCount < 100} onClick={onUnlockUfo}><Radio size={17} />UFO解除 <Sparkles size={15} />× 100</button>
+          )}
+        </div>
+        <div className="grid gap-3">
+          <ShopItem title="ダブルドロップ" description="1回の供給量を増やすためのアイテムです。（有効時間: 30分）" cost={3} active={activeBuffs.doubleDrop} remainingSeconds={buffRemaining.doubleDrop} affordable={goldTomatoCount >= 3} onActivate={() => onPurchaseItem("doubleDrop", 3)} light={isBreak} />
+          <ShopItem
+            title={currentAltitude >= 3_000 ? "ロケットブースト" : "気球ブースト"}
+            description={currentAltitude >= 3_000
+              ? "ロケットイベントを強化するためのアイテムです。（有効時間: 30分）"
+              : "気球イベントを強化するためのアイテムです。（有効時間: 30分）"}
+            cost={5}
+            active={activeBuffs.balloonBoost}
+            remainingSeconds={buffRemaining.balloonBoost}
+            affordable={goldTomatoCount >= 5}
+            onActivate={() => onPurchaseItem("balloonBoost", 5)}
+            light={isBreak}
+          />
+          <ShopItem title="ゴールドブースト" description="金トマトの出現確率をアップさせるアイテムです。（有効時間: 30分）" cost={10} active={activeBuffs.goldBoost} remainingSeconds={buffRemaining.goldBoost} affordable={goldTomatoCount >= 10} onActivate={() => onPurchaseItem("goldBoost", 10)} light={isBreak} />
+          <article className={`flex items-center justify-between gap-4 rounded-2xl border p-4 ${isBreak ? "border-violet-300 bg-violet-50" : "border-violet-500/30 bg-violet-950/20"}`}>
+            <div>
+              <h3 className="flex items-center gap-2 font-bold"><Disc3 className="text-violet-400" size={18} />宇宙タコアンロック</h3>
+              <p className={`mt-1 text-sm ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>画面上部に宇宙タコが出現！大量の金トマトを確定で投下します。</p>
+            </div>
+            {isOctopusUnlocked ? (
+              <span className="shrink-0 rounded-full border border-violet-400/70 bg-violet-400/15 px-3 py-2 text-center text-[11px] font-black tracking-wide text-violet-300 shadow-[0_0_18px_rgba(167,139,250,0.24)]">(((o))) OCTOPUS UNLOCKED</span>
+            ) : (
+              <button className={`${button} shrink-0 bg-violet-500 text-white`} disabled={goldTomatoCount < 1000} onClick={onUnlockOctopus}>アンロック <Sparkles size={15} />× 1000</button>
+            )}
+          </article>
+        </div>
+        <p className={`mt-4 text-xs opacity-75 ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>※休憩中はアイテムの減算は行われません。</p>
+      </section>
+    </div>
+  );
+}
+
+function ShopItem({ title, description, cost, active, remainingSeconds, affordable, onActivate, light }: ShopItemProps) {
+  return (
+    <article className={`flex items-center justify-between gap-4 rounded-2xl border p-4 ${light ? "border-neutral-300 bg-neutral-100" : "border-neutral-800 bg-neutral-950/70"}`}>
+      <div>
+        <h3 className="font-bold">{title}</h3>
+        <p className={`mt-1 text-sm ${light ? "text-neutral-600" : "text-neutral-400"}`}>{description}</p>
+      </div>
+      {active ? (
+        <div className="shrink-0 text-center">
+          <span className="block rounded-full border border-emerald-400/70 bg-emerald-400/15 px-3 py-2 text-xs font-black tracking-wide text-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.24)]">ACTIVE</span>
+          <span className="mt-1 block text-[11px] font-bold tabular-nums text-emerald-300">{formatBuffTime(remainingSeconds)}</span>
+        </div>
+      ) : (
+        <button className={`${button} shrink-0 ${light ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} disabled={!affordable} onClick={onActivate}>交換 <Sparkles size={15} />× {cost}</button>
+      )}
+    </article>
+  );
+}
