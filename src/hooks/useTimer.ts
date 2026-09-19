@@ -47,13 +47,11 @@ export function useTimer(onTomato: () => void, onSessionComplete?: () => void) {
         const completed = modeRef.current;
         stopDrops();
         sessionCompleteRef.current?.();
-        if (completed === "focus") tomatoRef.current();
-        const nextMode: TimerMode = completed === "focus" ? "break" : "focus";
-        modeRef.current = nextMode; setMode(nextMode); setRemaining(CONFIG.durations[nextMode]);
-        if (autoLoopRef.current) {
-          deadline.current = Date.now() + CONFIG.durations[nextMode] * 1000;
-          if (nextMode === "focus") scheduleFocus();
-          if (debugRef.current && nextMode === "focus") debugDrop.current = setInterval(() => tomatoRef.current(), CONFIG.debugDropInterval);
+        if (completed === "focus") {
+          tomatoRef.current();
+          modeRef.current = "break"; setMode("break"); setRemaining(CONFIG.durations.break);
+          deadline.current = Date.now() + CONFIG.durations.break * 1000;
+          runningRef.current = true; setRunning(true);
         } else {
           modeRef.current = "focus"; setMode("focus"); setRemaining(CONFIG.durations.focus);
           runningRef.current = false; setRunning(false);
