@@ -271,7 +271,7 @@
   - 上部ツールバー: `z-30`。
   - Shop Modal: `z-50`。
   - Reward Modal: `z-[60]`。
-  - 共通Privacy Footer: `z-[70]`。
+  - Privacyリンク: 標高バッジと同じゲームカード内の `z-20`。
 - Canvasの親とCanvas自身に `min-w-0` / `max-w-full` / `overflow-hidden` を適用し、リサイズ時にカード外へ出さない。
 
 ### 2.2 タイマー表示
@@ -313,10 +313,10 @@
 
 ### 2.6 プライバシーポリシーリンク
 
-- Root Layoutの共通 `<footer>` に配置し、全ルートで表示する。
-- 画面左下固定。`left-3`、sm以上 `left-4`。
-- 下余白は `max(0.75rem, env(safe-area-inset-bottom))` で端末のSafe Areaを考慮する。
-- `z-[70]`。薄い黒背景、zinc-400の10px文字、sm以上12px、角丸の控えめなテキストリンク。
+- Homeのゲームカード内で、右下の標高バッジと同じ絶対配置オーバーレイ層へ1つだけ配置する。Root Layoutには重複配置しない。
+- ゲームカード左下。`left-3`、sm以上 `left-5`。
+- 下位置は右下の標高バッジと同じくモバイル `bottom-3`、sm以上 `bottom-5` とし、両要素を完全に同じ水平ラインへ揃える。
+- `z-20`、`pointer-events-auto`。標高バッジと同じ `px-3 py-1.5 text-xs leading-4`、丸型境界、半透明背景の控えめなテキストリンク。
 - 遷移先は `/privacy`。中央や右下へ戻さない。
 
 ### 2.7 プライバシーポリシーページ
@@ -407,7 +407,7 @@
 | ファイル | 責務 | 変更時の保護事項 |
 | --- | --- | --- |
 | `src/components/PhysicsCanvas.tsx` | Matter Engine/World所有、RAF、Body lifecycle、衝突、感染、Terrain、カメラ、全高度イベント、描画統括 | `Engine.update`の位置、Ref同期、Set間移動、イベント順、描画順を維持。最重要核心ファイル |
-| `src/app/page.tsx` | 全画面UI、React State、タイマー接続、Reward、アイテム付与・使用、永久解放購入、Gold通貨、Spaceキー、広告配置 | z-index、モバイルCanvas top 7.75rem、ツールバーの横スクロールとno-scrollbar、モーダル制御を維持 |
+| `src/app/page.tsx` | 全画面UI、React State、タイマー接続、Reward、アイテム付与・使用、永久解放購入、Gold通貨、Spaceキー、広告配置、カード内Privacyリンク | z-index、モバイルCanvas top 7.75rem、ツールバーの横スクロールとno-scrollbar、標高とPrivacyリンクの同一bottom、モーダル制御を維持 |
 | `src/hooks/useTimer.ts` | 25/5分、deadline、通常・デバッグ供給、モード遷移 | Pauseと供給停止の連動、完了時コールバック順を維持 |
 | `src/hooks/useDebugMode.ts` | URL、公開環境変数、NODE_ENVから統合デバッグモードを判定 | 厳密な`debug === "true"`、SSR安全性、localStorage非使用を維持 |
 | `src/constants/assets.ts` | 確率、間隔、物理設定、保存キー、SVG Path、初期State | 数値変更はゲームバランスと永続化互換性へ直結 |
@@ -417,7 +417,7 @@
 
 | ファイル | 責務 |
 | --- | --- |
-| `src/app/layout.tsx` | Metadata、Analytics、Speed Insights、全ページ共通Privacy Footer |
+| `src/app/layout.tsx` | Metadata、AdSenseスクリプト、全ページ共通HTML構造 |
 | `src/app/globals.css` | Tailwind読込、全画面overflow制御、button cursor、no-scrollbar |
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |
 | `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI |
