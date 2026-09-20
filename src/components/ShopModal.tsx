@@ -5,6 +5,7 @@ import type { ShopItemProps, ShopModalProps } from "@/types/game";
 import { formatBuffTime } from "@/utils/gameUtils";
 
 const button = "inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold transition hover:-translate-y-0.5 disabled:cursor-default disabled:opacity-40 disabled:hover:translate-y-0";
+const unlockControl = "inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full px-1.5 text-[9px] font-black tracking-tight transition hover:-translate-y-0.5 disabled:cursor-default disabled:opacity-40 disabled:hover:translate-y-0 sm:gap-1.5 sm:px-3 sm:text-xs";
 
 export function ShopModal({
   isOpen,
@@ -36,12 +37,16 @@ export function ShopModal({
           </div>
           <button className={quietClass} aria-label="ショップを閉じる" onClick={onClose}><X size={18} /></button>
         </header>
-        <div className="mb-5 flex flex-wrap items-center gap-2">
-          <div className={`inline-flex items-center gap-2 rounded-full border border-amber-400/30 px-4 py-2 font-bold ${isBreak ? "bg-neutral-100 text-amber-700" : "bg-neutral-950 text-amber-300"}`}><Sparkles size={18} />所持 × {goldTomatoCount}</div>
+        <div className="mb-5 flex flex-row items-stretch gap-2.5">
           {isUfoUnlocked ? (
-            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/70 bg-emerald-400/15 px-4 py-2 text-xs font-black tracking-wide text-emerald-300"><Radio size={17} />UFO UNLOCKED</span>
+            <span className={`${unlockControl} border border-emerald-400/70 bg-emerald-400/15 text-emerald-300`}><Radio className="shrink-0" size={17} />UFO解除済み</span>
           ) : (
-            <button className={`${button} bg-sky-400 text-zinc-950`} disabled={goldTomatoCount < 100} onClick={onUnlockUfo}><Radio size={17} />UFO解除 <Sparkles size={15} />× 100</button>
+            <button className={`${unlockControl} bg-sky-400 text-zinc-950`} disabled={goldTomatoCount < 100} onClick={onUnlockUfo}><Radio className="shrink-0" size={17} />UFO解除 <Sparkles className="shrink-0" size={15} />× 100</button>
+          )}
+          {isOctopusUnlocked ? (
+            <span className={`${unlockControl} border border-violet-400/70 bg-violet-400/15 text-violet-300 shadow-[0_0_18px_rgba(167,139,250,0.24)]`}><Disc3 className="shrink-0" size={17} />宇宙タコ解除済み</span>
+          ) : (
+            <button className={`${unlockControl} bg-violet-500 text-white`} disabled={goldTomatoCount < 1000} onClick={onUnlockOctopus}><Disc3 className="shrink-0" size={17} />宇宙タコ解除 <Sparkles className="shrink-0" size={15} />× 1000</button>
           )}
         </div>
         <div className="grid gap-3">
@@ -59,17 +64,6 @@ export function ShopModal({
             light={isBreak}
           />
           <ShopItem title="ゴールドブースト" description="金トマトの出現確率をアップさせるアイテムです。（有効時間: 30分）" icon={<Sparkles size={16} />} count={itemCounts.goldBoost} active={activeBuffs.goldBoost} remainingSeconds={buffRemaining.goldBoost} onActivate={() => onUseItem("goldBoost")} light={isBreak} />
-          <article className={`flex items-center justify-between gap-4 rounded-2xl border p-4 ${isBreak ? "border-violet-300 bg-violet-50" : "border-violet-500/30 bg-violet-950/20"}`}>
-            <div>
-              <h3 className="flex items-center gap-2 font-bold"><Disc3 className="text-violet-400" size={18} />宇宙タコアンロック</h3>
-              <p className={`mt-1 text-sm ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>画面上部に宇宙タコが出現！大量の金トマトを確定で投下します。</p>
-            </div>
-            {isOctopusUnlocked ? (
-              <span className="shrink-0 rounded-full border border-violet-400/70 bg-violet-400/15 px-3 py-2 text-center text-[11px] font-black tracking-wide text-violet-300 shadow-[0_0_18px_rgba(167,139,250,0.24)]">(((o))) OCTOPUS UNLOCKED</span>
-            ) : (
-              <button className={`${button} shrink-0 bg-violet-500 text-white`} disabled={goldTomatoCount < 1000} onClick={onUnlockOctopus}>アンロック <Sparkles size={15} />× 1000</button>
-            )}
-          </article>
         </div>
         <p className={`mt-4 text-xs opacity-75 ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>※休憩中はアイテムの減算は行われません。</p>
       </section>

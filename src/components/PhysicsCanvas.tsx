@@ -81,6 +81,10 @@ type CatEvent = CatCargo & {
   velocityY: number;
   direction: 1 | -1;
   state: "falling" | "running";
+  runStartedAt: number;
+  walkUntil: number;
+  nextDirectionCheckAt: number;
+  escaping: boolean;
 };
 
 export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>(function PhysicsCanvas(
@@ -1048,7 +1052,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       if (isCat) {
         const normalTomatoDiameter = (20 + Math.random() * 5) * 2;
         catCargoByDelivery.set(delivery, {
-          size: normalTomatoDiameter * (1.5 + Math.random() * 0.75),
+          size: normalTomatoDiameter * (3 + Math.random() * 1.5),
           animationOffset: Math.random() * CAT_CARRY_FRAME_INTERVAL_MS * 2,
         });
       }
@@ -1307,6 +1311,9 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         && Number.isFinite(cat.y)
         && Number.isFinite(cat.velocityY)
         && Number.isFinite(cat.size)
+        && Number.isFinite(cat.runStartedAt)
+        && Number.isFinite(cat.walkUntil)
+        && Number.isFinite(cat.nextDirectionCheckAt)
         && Number.isFinite(scale)
         && Number.isFinite(bounds.left)
         && Number.isFinite(bounds.right)
@@ -1321,6 +1328,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         velocityY: cat.velocityY,
         size: cat.size,
         direction: cat.direction,
+        runStartedAt: cat.runStartedAt,
+        walkUntil: cat.walkUntil,
+        nextDirectionCheckAt: cat.nextDirectionCheckAt,
+        escaping: cat.escaping,
         scale,
         bounds,
       };
@@ -1371,33 +1382,72 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
             cat.velocityY = 0;
             cat.direction = Math.random() < 0.5 ? 1 : -1;
             cat.state = "running";
+            cat.runStartedAt = now;
+            cat.walkUntil = now + 15000 + Math.random() * 5000;
+            cat.nextDirectionCheckAt = now + 2000 + Math.random() * 2000;
+            cat.escaping = false;
           } else {
             cat.y = nextY;
           }
         } else {
           const currentFootY = cat.y + halfHeight;
-          const nextX = cat.x + cat.direction * frameDelta * 0.18 / scale;
+          if (!cat.escaping && now >= cat.walkUntil) {
+            cat.escaping = true;
+            cat.direction = cat.x < (bounds.left + bounds.right) / 2 ? -1 : 1;
+          }
+          if (!cat.escaping) {
+            const visibleWidth = Math.max(1, bounds.right - bounds.left);
+            const leftTurnBoundary = bounds.left + visibleWidth * 0.125;
+            const rightTurnBoundary = bounds.right - visibleWidth * 0.125;
+            if (cat.x <= leftTurnBoundary) {
+              cat.direction = 1;
+              cat.nextDirectionCheckAt = Math.max(cat.nextDirectionCheckAt, now + 1200);
+            } else if (cat.x >= rightTurnBoundary) {
+              cat.direction = -1;
+              cat.nextDirectionCheckAt = Math.max(cat.nextDirectionCheckAt, now + 1200);
+            } else if (now >= cat.nextDirectionCheckAt) {
+              const probeDistance = Math.max(cat.size * 0.38, 20 / scale);
+              const probeMinimumY = currentFootY - cat.size * 1.25;
+              const probeMaximumY = currentFootY + cat.size * 1.75;
+              const leftSurfaceY = getCatSurfaceY(cat.x - probeDistance, probeMinimumY, probeMaximumY);
+              const rightSurfaceY = getCatSurfaceY(cat.x + probeDistance, probeMinimumY, probeMaximumY);
+              if (Number.isFinite(leftSurfaceY) && Number.isFinite(rightSurfaceY)) {
+                const slopeThreshold = Math.max(2 / scale, cat.size * 0.035);
+                const slopeDelta = rightSurfaceY - leftSurfaceY;
+                if (Math.abs(slopeDelta) >= slopeThreshold && Math.random() < 0.7) {
+                  cat.direction = slopeDelta > 0 ? 1 : -1;
+                } else if (Math.random() < 0.5) {
+                  cat.direction = cat.direction === 1 ? -1 : 1;
+                }
+              } else if (Number.isFinite(leftSurfaceY) !== Number.isFinite(rightSurfaceY)) {
+                cat.direction = Number.isFinite(leftSurfaceY) ? 1 : -1;
+              } else if (Math.random() < 0.5) {
+                cat.direction = cat.direction === 1 ? -1 : 1;
+              }
+              cat.nextDirectionCheckAt = now + 2000 + Math.random() * 2000;
+            }
+          }
+          const runSpeed = (cat.escaping ? 0.16 : 0.07) / scale;
+          const nextX = cat.x + cat.direction * frameDelta * runSpeed;
           const surfaceY = getCatSurfaceY(
             nextX,
-            currentFootY - cat.size * 0.45,
-            currentFootY + cat.size * 0.60,
+            currentFootY - cat.size * 1.25,
+            currentFootY + cat.size * 1.75,
           );
           cat.x = nextX;
           if (Number.isFinite(surfaceY)) {
             const targetY = surfaceY - halfHeight;
-            cat.y += (targetY - cat.y) * Math.min(1, frameDelta / 70);
+            cat.y += (targetY - cat.y) * Math.min(1, frameDelta / 85);
           } else {
-            cat.state = "falling";
-            cat.velocityY = 0.04 / scale;
+            cat.y += frameDelta * 0.08 / scale;
           }
         }
         inspectCatKinematics(cat, index, "after-update", bounds, scale);
 
-        const outsideHorizontalBounds = cat.direction === 1
-          ? cat.x - cat.size * 0.5 > bounds.right
-          : cat.x + cat.size * 0.5 < bounds.left;
-        const belowCleanupLine = cat.y - cat.size * 0.5 > bounds.bottom + 300 / scale;
-        if (outsideHorizontalBounds || belowCleanupLine) {
+        const horizontalCleanupMargin = 100 / scale;
+        const outsideHorizontalBounds = cat.x + cat.size * 0.5 < bounds.left - horizontalCleanupMargin
+          || cat.x - cat.size * 0.5 > bounds.right + horizontalCleanupMargin;
+        if (outsideHorizontalBounds) {
           catEvents.splice(index, 1);
           continue;
         }
@@ -2231,6 +2281,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
               velocityY: 0.05 / Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE),
               direction: delivery.direction,
               state: "falling",
+              runStartedAt: ufoNow,
+              walkUntil: ufoNow + 15000 + Math.random() * 5000,
+              nextDirectionCheckAt: ufoNow,
+              escaping: false,
             });
           } else if (!isCatDropActive()) {
             const dropCount = activeBuffsRef.current.doubleDrop ? 2 : 1;
