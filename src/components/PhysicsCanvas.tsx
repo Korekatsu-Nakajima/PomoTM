@@ -36,6 +36,12 @@ import {
   AURORA_EVENT_ALTITUDE,
   BONUS_BREAK_GIANT_CHANCE,
   BONUS_BREAK_GOLDEN_CHANCE,
+  CAT_APPEARANCE_CHANCE,
+  CAT_CARRY_FRAME_INTERVAL_MS,
+  CAT_DEBUG_APPEARANCE_CHANCE,
+  CAT_FRAME_1,
+  CAT_FRAME_2,
+  CAT_RUN_FRAME_INTERVAL_MS,
   DEEP_CORE_BODY_THRESHOLD,
   DEEP_CORE_EVALUATION_INTERVAL,
   DEEP_CORE_INSET,
@@ -57,10 +63,25 @@ import {
   TERRAIN_EVALUATION_INTERVAL,
   TERRAIN_SEGMENT_COUNT,
   TERRAIN_VIEWPORT_MARGIN,
+  TOMATO_SLEEP_THRESHOLD,
+  TOMATO_WAKE_IMPACT_SPEED,
   UFO_APPEARANCE_CHANCE,
 } from "@/constants/assets";
 
 export type { PhysicsCanvasHandle } from "@/types/game";
+
+type CatCargo = {
+  size: number;
+  animationOffset: number;
+};
+
+type CatEvent = CatCargo & {
+  x: number;
+  y: number;
+  velocityY: number;
+  direction: 1 | -1;
+  state: "falling" | "running";
+};
 
 export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>(function PhysicsCanvas(
   {
@@ -73,6 +94,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     isOctopusUnlocked,
     isDebugMode,
     debugUfoMode = false,
+    debugCatMode = false,
     isBonusBreakMode = false,
     timerMode,
     isTimerRunning,
@@ -97,6 +119,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
   const isOctopusUnlockedRef = useRef(isOctopusUnlocked);
   const isDebugModeRef = useRef(isDebugMode);
   const debugUfoModeRef = useRef(debugUfoMode);
+  const debugCatModeRef = useRef(debugCatMode);
   const isBonusBreakModeRef = useRef(isBonusBreakMode);
   const isFocusRunningRef = useRef(timerMode === "focus" && isTimerRunning);
   const isSupplyRunningRef = useRef(timerMode === "focus" && isTimerRunning);
@@ -119,6 +142,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
   useEffect(() => { isOctopusUnlockedRef.current = isOctopusUnlocked; }, [isOctopusUnlocked]);
   useEffect(() => { isDebugModeRef.current = isDebugMode; }, [isDebugMode]);
   useEffect(() => { debugUfoModeRef.current = debugUfoMode; }, [debugUfoMode]);
+  useEffect(() => { debugCatModeRef.current = debugCatMode; }, [debugCatMode]);
   useEffect(() => { isBonusBreakModeRef.current = isBonusBreakMode; }, [isBonusBreakMode]);
   useEffect(() => { altitudeChangeRef.current = onAltitudeChange; }, [onAltitudeChange]);
   useEffect(() => {
@@ -142,6 +166,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     const engine = Engine.create(PHYSICS_ENGINE_OPTIONS);
     const context = canvas.getContext("2d");
     if (!context) return;
+    const catFramePaths = [new Path2D(CAT_FRAME_1), new Path2D(CAT_FRAME_2)] as const;
 
     let width = 1, height = 1, frame = 0;
     let flightScreenY = 150;
@@ -158,8 +183,13 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     const staticCoreBodies = new Set<Matter.Body>();
     const lowerStaticBodies = new Set<Matter.Body>();
     const birdDeliveries: BirdDelivery[] = [];
+    const catCargoByDelivery = new WeakMap<BirdDelivery, CatCargo>();
+    const catEvents: CatEvent[] = [];
     const balloonEvents: BalloonEvent[] = [];
     const ufoEvents: UfoEvent[] = [];
+    const isCatDropActive = () => debugCatModeRef.current
+      || birdDeliveries.some((delivery) => catCargoByDelivery.has(delivery))
+      || catEvents.some((cat) => cat.state === "falling");
     let octopusEvent: OctopusEvent | null = null;
     const alienEvents: AlienEvent[] = [];
     const deferredDeliveries: boolean[] = [];
@@ -371,6 +401,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       fixedRadius?: number,
       squishy?: boolean,
     ) => {
+      if (isCatDropActive()) return null;
       const radius = fixedRadius ?? (20 + Math.random() * 5) * (0.92 + Math.random() * 0.16);
       const isSquishy = squishy ?? (!golden && Math.random() < 0.04);
       const standardRadius = 22.5;
@@ -392,7 +423,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         frictionAir: 0.02,
         density,
         slop: 0.05,
-        sleepThreshold: 30,
+        sleepThreshold: TOMATO_SLEEP_THRESHOLD,
         label: "tomato",
         plugin: {
           tomato: {
@@ -636,6 +667,46 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       });
     };
 
+    const reportCatDiagnostic = (
+      severity: "warn" | "error",
+      reason: string,
+      detail: Record<string, unknown>,
+    ) => {
+      const timestamp = performance.now();
+      const diagnosticKey = `cat:${reason}`;
+      const previousLogTime = diagnosticLogTimes.get(diagnosticKey) ?? Number.NEGATIVE_INFINITY;
+      if (timestamp - previousLogTime < 2_000) return;
+      diagnosticLogTimes.set(diagnosticKey, timestamp);
+      const payload = {
+        reason,
+        phase: lastPhysicsPhase,
+        timestamp,
+        detail,
+        cat: {
+          debugMode: debugCatModeRef.current,
+          carried: birdDeliveries.filter((delivery) => catCargoByDelivery.has(delivery)).length,
+          falling: catEvents.filter((cat) => cat.state === "falling").length,
+          running: catEvents.filter((cat) => cat.state === "running").length,
+        },
+        camera: {
+          scale: currentScale.current,
+          targetScale: targetScale.current,
+          offsetY: currentOffsetY.current,
+          targetOffsetY: targetOffsetY.current,
+          bounds: camera.current,
+          altitude: currentAltitude,
+        },
+        bodies: {
+          active: activeBodies.size,
+          sleeping: sleepingBodies.size,
+          staticCore: staticCoreBodies.size,
+          lowerStatic: lowerStaticBodies.size,
+        },
+      };
+      if (severity === "error") console.error("[CatDiagnostic]", payload);
+      else console.warn("[CatDiagnostic]", payload);
+    };
+
     const drawPhysicsDiagnosticOverlay = () => {
       if (!isDebugModeRef.current) {
         diagnosticAlert = null;
@@ -714,6 +785,18 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       }
     };
 
+    const wakeSleepingTomatoesOnImpact = (
+      bodyA: Matter.Body,
+      bodyB: Matter.Body,
+      relativeSpeed: number,
+    ) => {
+      if (bodyA.label !== "tomato" || bodyB.label !== "tomato") return;
+      if (!Number.isFinite(relativeSpeed) || relativeSpeed < TOMATO_WAKE_IMPACT_SPEED) return;
+      if (bodyA.isStatic || bodyB.isStatic) return;
+      if (bodyA.isSleeping) Matter.Sleeping.set(bodyA, false);
+      if (bodyB.isSleeping) Matter.Sleeping.set(bodyB, false);
+    };
+
     const evaluateCollisionStart = (event: Matter.IEventCollision<Matter.Engine>) => {
       lastPhysicsPhase = "collisionStart";
       for (const pair of event.pairs) {
@@ -723,6 +806,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
           pair.bodyA.velocity.y - pair.bodyB.velocity.y,
         );
         const relativeSpeed = Number.isFinite(calculatedRelativeSpeed) ? calculatedRelativeSpeed : 0;
+        wakeSleepingTomatoesOnImpact(pair.bodyA, pair.bodyB, relativeSpeed);
         if (relativeSpeed >= 6) {
           if (pair.bodyA.label === "tomato") {
             const tomato = pair.bodyA.plugin.tomato as TomatoBodyData;
@@ -775,7 +859,20 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       }
     };
 
+    const evaluateCollisionActive = (event: Matter.IEventCollision<Matter.Engine>) => {
+      for (const pair of event.pairs) {
+        correctDeepTomatoOverlap(pair.bodyA, pair.bodyB);
+        const calculatedRelativeSpeed = Math.hypot(
+          pair.bodyA.velocity.x - pair.bodyB.velocity.x,
+          pair.bodyA.velocity.y - pair.bodyB.velocity.y,
+        );
+        const relativeSpeed = Number.isFinite(calculatedRelativeSpeed) ? calculatedRelativeSpeed : 0;
+        wakeSleepingTomatoesOnImpact(pair.bodyA, pair.bodyB, relativeSpeed);
+      }
+    };
+
     const handleStrongImpact = (event: Matter.IEventCollision<Matter.Engine>) => evaluateCollisionStart(event);
+    const handleActiveSleepingContact = (event: Matter.IEventCollision<Matter.Engine>) => evaluateCollisionActive(event);
 
     const removeInvalidBody = (body: Matter.Body) => {
       Composite.remove(engine.world, body);
@@ -896,16 +993,23 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     };
 
     Matter.Events.on(engine, "collisionStart", handleStrongImpact);
+    Matter.Events.on(engine, "collisionActive", handleActiveSleepingContact);
     Matter.Events.on(engine, "beforeUpdate", handleBeforeUpdate);
     Matter.Events.on(engine, "afterUpdate", handleAfterUpdate);
 
     const startDelivery = (golden = false) => {
       if (pageHidden) return;
       if (isUfoDebugActive()) return;
+      const catChance = debugCatModeRef.current
+        ? 1
+        : isDebugModeRef.current
+          ? CAT_DEBUG_APPEARANCE_CHANCE
+          : CAT_APPEARANCE_CHANCE;
+      const isCat = Math.random() < catChance;
       const useSpaceVehicles = currentAltitude >= SPACE_EVENT_ALTITUDE;
       const useSatellite = currentAltitude >= ALIEN_EVENT_ALTITUDE;
       const balloonChance = activeBuffsRef.current.balloonBoost ? 0.02 : 0.01;
-      if (!useSpaceVehicles && Math.random() < balloonChance) {
+      if (!isCat && !useSpaceVehicles && Math.random() < balloonChance) {
         const startedAt = ufoEventTime;
         balloonEvents.push({
           startedAt,
@@ -923,7 +1027,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       const startedAt = ufoEventTime;
       const satelliteStartYRatio = 0.25 + (Math.random() - 0.5) * 0.20;
       const satelliteEndYRatio = 0.25 + (Math.random() - 0.5) * 0.20;
-      birdDeliveries.push({
+      const delivery: BirdDelivery = {
         startedAt,
         duration: useSatellite ? 9_500 + Math.random() * 1_000 : 2200 + Math.random() * 600,
         releaseAt: 0.38 + Math.random() * 0.24,
@@ -939,7 +1043,15 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         radioPulseStartedAt: Number.NEGATIVE_INFINITY,
         satelliteStartYRatio,
         satelliteEndYRatio,
-      });
+      };
+      birdDeliveries.push(delivery);
+      if (isCat) {
+        const normalTomatoDiameter = (20 + Math.random() * 5) * 2;
+        catCargoByDelivery.set(delivery, {
+          size: normalTomatoDiameter * (1.5 + Math.random() * 0.75),
+          animationOffset: Math.random() * CAT_CARRY_FRAME_INTERVAL_MS * 2,
+        });
+      }
     };
     const queueBirdDelivery = (golden = false) => {
       if (pageHidden) return;
@@ -1080,6 +1192,225 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         context.fill();
       }
       context.restore();
+    };
+
+    const drawCat = (
+      x: number,
+      y: number,
+      size: number,
+      direction: 1 | -1,
+      now: number,
+      frameInterval: number,
+      animationOffset: number,
+    ) => {
+      const frameIndex = Math.floor((now + animationOffset) / frameInterval) % catFramePaths.length;
+      const scale = size / 64;
+      context.save();
+      context.translate(x, y);
+      context.scale(direction * scale, scale);
+      context.translate(-32, -32);
+      context.fillStyle = breakModeRef.current ? "#171717" : "#ffffff";
+      context.fill(catFramePaths[frameIndex]);
+      context.restore();
+    };
+
+    const getCatSurfaceY = (x: number, minimumY: number, maximumY: number) => {
+      let surfaceY = Number.POSITIVE_INFINITY;
+      const considerSurface = (candidateY: number) => {
+        if (Number.isFinite(candidateY)
+          && candidateY >= minimumY
+          && candidateY <= maximumY
+          && candidateY < surfaceY) surfaceY = candidateY;
+      };
+      const considerCircle = (centerX: number, centerY: number, radius: number) => {
+        if (!Number.isFinite(radius) || radius <= 0) return;
+        const offsetX = x - centerX;
+        if (Math.abs(offsetX) > radius) return;
+        considerSurface(centerY - Math.sqrt(Math.max(0, radius * radius - offsetX * offsetX)));
+      };
+
+      if (cloudFloorEnabled) {
+        for (const puff of cloudFloorParts) {
+          considerCircle(puff.position.x, puff.position.y, puff.circleRadius ?? 0);
+        }
+      } else {
+        considerSurface(floor.bounds.min.y);
+      }
+
+      const tomatoCandidates = new Set([
+        ...activeBodies,
+        ...sleepingBodies,
+        ...pendingSleeping,
+        ...staticCoreBodies,
+        ...lowerStaticBodies,
+      ]);
+      for (const body of tomatoCandidates) {
+        if (body.label !== "tomato") continue;
+        const tomato = body.plugin.tomato as TomatoBodyData | undefined;
+        if (!tomato) continue;
+        const beforeX = body.position.x;
+        const beforeY = body.position.y;
+        const beforeVelocityX = body.velocity.x;
+        const beforeVelocityY = body.velocity.y;
+        const beforeForceX = body.force.x;
+        const beforeForceY = body.force.y;
+        const beforeSleeping = body.isSleeping;
+        considerCircle(body.position.x, body.position.y, tomato.radius);
+        if (body.position.x !== beforeX
+            || body.position.y !== beforeY
+            || body.velocity.x !== beforeVelocityX
+            || body.velocity.y !== beforeVelocityY
+            || body.force.x !== beforeForceX
+            || body.force.y !== beforeForceY
+            || body.isSleeping !== beforeSleeping) {
+          reportCatDiagnostic("error", "cat-surface-read-mutated-tomato", {
+            bodyId: body.id,
+            before: {
+              x: beforeX,
+              y: beforeY,
+              velocityX: beforeVelocityX,
+              velocityY: beforeVelocityY,
+              forceX: beforeForceX,
+              forceY: beforeForceY,
+              isSleeping: beforeSleeping,
+            },
+            after: {
+              x: body.position.x,
+              y: body.position.y,
+              velocityX: body.velocity.x,
+              velocityY: body.velocity.y,
+              forceX: body.force.x,
+              forceY: body.force.y,
+              isSleeping: body.isSleeping,
+            },
+          });
+        }
+      }
+
+      if (terrainInitialized && terrainBinWidth > 0) {
+        const terrainIndex = Math.floor((x - terrainLeft) / terrainBinWidth);
+        if (terrainIndex >= 0 && terrainIndex < terrainTopByBin.length) {
+          considerSurface(terrainTopByBin[terrainIndex]);
+        }
+      }
+      return surfaceY;
+    };
+
+    const inspectCatKinematics = (
+      cat: CatEvent,
+      index: number,
+      stage: "before-update" | "after-update",
+      bounds: CameraBounds,
+      scale: number,
+    ) => {
+      const finiteState = Number.isFinite(cat.x)
+        && Number.isFinite(cat.y)
+        && Number.isFinite(cat.velocityY)
+        && Number.isFinite(cat.size)
+        && Number.isFinite(scale)
+        && Number.isFinite(bounds.left)
+        && Number.isFinite(bounds.right)
+        && Number.isFinite(bounds.top)
+        && Number.isFinite(bounds.bottom);
+      const detail = {
+        index,
+        stage,
+        state: cat.state,
+        x: cat.x,
+        y: cat.y,
+        velocityY: cat.velocityY,
+        size: cat.size,
+        direction: cat.direction,
+        scale,
+        bounds,
+      };
+      if (!finiteState) {
+        reportCatDiagnostic("error", `cat-non-finite-${stage}`, detail);
+        return;
+      }
+      const visibleWidth = Math.max(1, Math.abs(bounds.right - bounds.left));
+      const visibleHeight = Math.max(1, Math.abs(bounds.bottom - bounds.top));
+      const margin = Math.max(visibleWidth, visibleHeight) * 4;
+      const outsideExtremeRange = cat.x < bounds.left - margin
+        || cat.x > bounds.right + margin
+        || cat.y < bounds.top - margin
+        || cat.y > bounds.bottom + margin;
+      const excessiveSpeed = Math.abs(cat.velocityY) > 5 / Math.max(scale, MIN_DYNAMIC_CAMERA_SCALE);
+      const invalidSize = cat.size <= 0 || cat.size > Math.max(visibleWidth, visibleHeight) * 2;
+      if (outsideExtremeRange || excessiveSpeed || invalidSize) {
+        reportCatDiagnostic("warn", `cat-kinematics-outlier-${stage}`, {
+          ...detail,
+          outsideExtremeRange,
+          excessiveSpeed,
+          invalidSize,
+        });
+      }
+    };
+
+    const updateAndDrawCats = (frameDelta: number, bounds: CameraBounds, now: number) => {
+      const scale = Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
+      if (!Number.isFinite(frameDelta) || frameDelta < 0 || !Number.isFinite(now)) {
+        reportCatDiagnostic("error", "cat-frame-input-invalid", { frameDelta, now, bounds, scale });
+      }
+      for (let index = catEvents.length - 1; index >= 0; index--) {
+        const cat = catEvents[index];
+        inspectCatKinematics(cat, index, "before-update", bounds, scale);
+        const halfHeight = cat.size * 0.18;
+        if (cat.state === "falling") {
+          const currentFootY = cat.y + halfHeight;
+          cat.velocityY = Math.min(1.5 / scale, cat.velocityY + frameDelta * 0.00105 / scale);
+          const nextY = cat.y + cat.velocityY * frameDelta;
+          const nextFootY = nextY + halfHeight;
+          const surfaceY = getCatSurfaceY(
+            cat.x,
+            currentFootY - cat.size * 0.12,
+            nextFootY + 4 / scale,
+          );
+          if (Number.isFinite(surfaceY)) {
+            cat.y = surfaceY - halfHeight;
+            cat.velocityY = 0;
+            cat.direction = Math.random() < 0.5 ? 1 : -1;
+            cat.state = "running";
+          } else {
+            cat.y = nextY;
+          }
+        } else {
+          const currentFootY = cat.y + halfHeight;
+          const nextX = cat.x + cat.direction * frameDelta * 0.18 / scale;
+          const surfaceY = getCatSurfaceY(
+            nextX,
+            currentFootY - cat.size * 0.45,
+            currentFootY + cat.size * 0.60,
+          );
+          cat.x = nextX;
+          if (Number.isFinite(surfaceY)) {
+            const targetY = surfaceY - halfHeight;
+            cat.y += (targetY - cat.y) * Math.min(1, frameDelta / 70);
+          } else {
+            cat.state = "falling";
+            cat.velocityY = 0.04 / scale;
+          }
+        }
+        inspectCatKinematics(cat, index, "after-update", bounds, scale);
+
+        const outsideHorizontalBounds = cat.direction === 1
+          ? cat.x - cat.size * 0.5 > bounds.right
+          : cat.x + cat.size * 0.5 < bounds.left;
+        const belowCleanupLine = cat.y - cat.size * 0.5 > bounds.bottom + 300 / scale;
+        if (outsideHorizontalBounds || belowCleanupLine) {
+          catEvents.splice(index, 1);
+          continue;
+        }
+        drawCat(
+          cat.x,
+          cat.y,
+          cat.size,
+          cat.direction,
+          now,
+          cat.state === "running" ? CAT_RUN_FRAME_INTERVAL_MS : CAT_CARRY_FRAME_INTERVAL_MS,
+          cat.animationOffset,
+        );
+      }
     };
 
     const updateTomatoTransitions = (frameDelta: number) => {
@@ -1599,6 +1930,17 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       let rightmostPoint = Number.NEGATIVE_INFINITY;
       let highestPoint = Number.POSITIVE_INFINITY;
       const includeBodyBounds = (body: Matter.Body) => {
+        if (body.label !== "tomato" || !body.plugin?.tomato) {
+          reportCatDiagnostic("error", "non-tomato-in-altitude-body-set", {
+            bodyId: body.id,
+            label: body.label,
+            hasTomatoPlugin: Boolean(body.plugin?.tomato),
+            position: { x: body.position.x, y: body.position.y },
+            velocity: { x: body.velocity.x, y: body.velocity.y },
+            isSleeping: body.isSleeping,
+            isStatic: body.isStatic,
+          });
+        }
         leftmostPoint = Math.min(leftmostPoint, body.bounds.min.x);
         rightmostPoint = Math.max(rightmostPoint, body.bounds.max.x);
         highestPoint = Math.min(highestPoint, body.bounds.min.y - 25);
@@ -1618,9 +1960,31 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         includeBodyBounds(body);
       });
       highestPoint = Math.min(highestPoint, archivedHighestPoint);
+      const altitudeBeforeUpdate = currentAltitude;
       const altitude = Number.isFinite(highestPoint)
         ? Math.max(0, Math.floor((height - (highestPoint + 25)) * 0.5))
         : currentAltitude;
+      if (!Number.isFinite(altitude)
+        || !Number.isFinite(altitudeBeforeUpdate)
+        || !Number.isFinite(height)
+        || (Number.isFinite(highestPoint) && !Number.isFinite(highestPoint + 25))) {
+        reportCatDiagnostic("error", "altitude-non-finite", {
+          altitude,
+          altitudeBeforeUpdate,
+          highestPoint,
+          archivedHighestPoint,
+          height,
+        });
+      } else if (Math.abs(altitude - altitudeBeforeUpdate) >= 10_000) {
+        reportCatDiagnostic("warn", "altitude-jump-over-10000m", {
+          altitude,
+          altitudeBeforeUpdate,
+          delta: altitude - altitudeBeforeUpdate,
+          highestPoint,
+          archivedHighestPoint,
+          catEvents: catEvents.length,
+        });
+      }
       currentAltitude = altitude;
       if (altitude !== lastReportedAltitude) {
         lastReportedAltitude = altitude;
@@ -1699,6 +2063,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
           shootingStarEvent = null;
         }
       }
+      const cameraScaleBeforeUpdate = currentScale.current;
+      const cameraOffsetBeforeUpdate = currentOffsetY.current;
       if (Number.isFinite(leftmostPoint) && Number.isFinite(rightmostPoint) && Number.isFinite(highestPoint)) {
         const centerX = width / 2;
         const horizontalMargin = width * 0.1;
@@ -1725,6 +2091,22 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
           }
           if (screenTop < safeTop) {
             const requiredOffsetY = topDistance - (height - safeTop) / currentScale.current;
+            if (!Number.isFinite(requiredOffsetY)
+              || Math.abs(requiredOffsetY - targetOffsetY.current) >= 10_000) {
+              reportCatDiagnostic(
+                Number.isFinite(requiredOffsetY) ? "warn" : "error",
+                "camera-target-offset-outlier",
+                {
+                  requiredOffsetY,
+                  targetOffsetY: targetOffsetY.current,
+                  delta: requiredOffsetY - targetOffsetY.current,
+                  highestPoint,
+                  topDistance,
+                  screenTop,
+                  safeTop,
+                },
+              );
+            }
             targetOffsetY.current = Math.max(targetOffsetY.current, requiredOffsetY);
           }
         }
@@ -1738,6 +2120,30 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       }
       currentOffsetY.current += (targetOffsetY.current - currentOffsetY.current) * 0.03;
       if (Math.abs(targetOffsetY.current - currentOffsetY.current) < 0.01) currentOffsetY.current = targetOffsetY.current;
+      if (!Number.isFinite(currentScale.current)
+        || !Number.isFinite(targetScale.current)
+        || !Number.isFinite(currentOffsetY.current)
+        || !Number.isFinite(targetOffsetY.current)) {
+        reportCatDiagnostic("error", "camera-state-non-finite", {
+          cameraScaleBeforeUpdate,
+          cameraScaleAfterUpdate: currentScale.current,
+          targetScale: targetScale.current,
+          cameraOffsetBeforeUpdate,
+          cameraOffsetAfterUpdate: currentOffsetY.current,
+          targetOffsetY: targetOffsetY.current,
+          altitude,
+          highestPoint,
+        });
+      } else if (Math.abs(currentOffsetY.current - cameraOffsetBeforeUpdate) >= 10_000) {
+        reportCatDiagnostic("warn", "camera-offset-jump-over-10000", {
+          cameraOffsetBeforeUpdate,
+          cameraOffsetAfterUpdate: currentOffsetY.current,
+          delta: currentOffsetY.current - cameraOffsetBeforeUpdate,
+          targetOffsetY: targetOffsetY.current,
+          altitude,
+          highestPoint,
+        });
+      }
       const bounds = getBounds(currentScale.current, currentOffsetY.current);
       camera.current = bounds;
       syncBoundaries(bounds);
@@ -1792,8 +2198,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       pendingSleeping.forEach((body) => drawTomatoBody(body));
       updateAndDrawJuiceParticles(frameDelta);
       updateAndDrawContrailParticles(frameDelta);
+      updateAndDrawCats(frameDelta, bounds, ufoNow);
       for (let index = birdDeliveries.length - 1; index >= 0; index--) {
         const delivery = birdDeliveries[index];
+        const catCargo = catCargoByDelivery.get(delivery);
         const progress = Math.min(1, (ufoNow - delivery.startedAt) / delivery.duration);
         const routeMargin = 70 / currentScale.current;
         const fromX = delivery.direction === 1 ? bounds.left - routeMargin : bounds.right + routeMargin;
@@ -1810,21 +2218,55 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         const dropAnchorOffset = delivery.vehicle === "satellite"
           ? carrierSize * 0.18
           : carrierSize * 0.62;
+        const catCarryY = catCargo
+          ? y + dropAnchorOffset + catCargo.size * 0.24
+          : y;
         if (!delivery.released && progress >= delivery.releaseAt) {
           delivery.released = true;
-          const dropCount = activeBuffsRef.current.doubleDrop ? 2 : 1;
-          for (let dropIndex = 0; dropIndex < dropCount; dropIndex++) {
-            const dropOffset = (dropIndex - (dropCount - 1) / 2) * delivery.radius * 0.8;
-            createTomato(
-              delivery.golden,
-              false,
-              { x: x + dropOffset, y: y + dropAnchorOffset + delivery.radius },
-              delivery.radius,
-              delivery.isSquishy,
-            );
-            if (delivery.golden) goldenDropRef.current();
-            if (dropIndex > 0) bonusTomatoRef.current(delivery.golden);
+          if (catCargo) {
+            catEvents.push({
+              ...catCargo,
+              x,
+              y: catCarryY,
+              velocityY: 0.05 / Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE),
+              direction: delivery.direction,
+              state: "falling",
+            });
+          } else if (!isCatDropActive()) {
+            const dropCount = activeBuffsRef.current.doubleDrop ? 2 : 1;
+            for (let dropIndex = 0; dropIndex < dropCount; dropIndex++) {
+              const dropOffset = (dropIndex - (dropCount - 1) / 2) * delivery.radius * 0.8;
+              createTomato(
+                delivery.golden,
+                false,
+                { x: x + dropOffset, y: y + dropAnchorOffset + delivery.radius },
+                delivery.radius,
+                delivery.isSquishy,
+              );
+              if (delivery.golden) goldenDropRef.current();
+              if (dropIndex > 0) bonusTomatoRef.current(delivery.golden);
+            }
           }
+        }
+        if (!delivery.released && catCargo) {
+          context.save();
+          context.globalAlpha = 0.55;
+          context.strokeStyle = breakModeRef.current ? "#171717" : "#ffffff";
+          context.lineWidth = 1.25 / Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
+          context.beginPath();
+          context.moveTo(x, y + dropAnchorOffset * 0.55);
+          context.lineTo(x, catCarryY - catCargo.size * 0.10);
+          context.stroke();
+          context.restore();
+          drawCat(
+            x,
+            catCarryY,
+            catCargo.size,
+            delivery.direction,
+            ufoNow,
+            CAT_CARRY_FRAME_INTERVAL_MS,
+            catCargo.animationOffset,
+          );
         }
         if (delivery.vehicle === "satellite") {
           if (ufoNow >= delivery.nextRadioAt) {
@@ -1841,7 +2283,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
             delivery.initialRotation,
             delivery.radioPulseStartedAt,
           );
-          if (!delivery.released) {
+          if (!delivery.released && !catCargo) {
             drawTomato(
               context,
               x,
@@ -1873,7 +2315,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
             y,
             birdSize,
             delivery.direction,
-            !delivery.released,
+            !delivery.released && !catCargo,
             delivery.golden,
             delivery.isSquishy,
             delivery.radius,
@@ -1884,7 +2326,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
             y,
             birdSize,
             delivery.direction,
-            !delivery.released,
+            !delivery.released && !catCargo,
             delivery.golden,
             delivery.isSquishy,
             delivery.radius,
@@ -1943,7 +2385,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
           balloon.enteredViewport = true;
           balloon.nextDropAt = ufoNow;
         }
-        while (insideDropArea && ufoNow >= balloon.nextDropAt) {
+        if (insideDropArea && isCatDropActive()) balloon.nextDropAt = ufoNow + 250;
+        while (insideDropArea && !isCatDropActive() && ufoNow >= balloon.nextDropAt) {
           const wasInitialDrop = balloon.initialDropPending;
           const spec = balloon.vehicle === "rocket"
             ? createMediumTomatoSpec(wasInitialDrop ? balloon.initialGolden : undefined)
@@ -2112,7 +2555,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         const dropAreaLeft = bounds.left + dropMargin;
         const dropAreaRight = bounds.right - dropMargin;
 
-        while (elapsed >= hoverStart && elapsed < hoverEnd && ufoNow >= ufo.nextDropAt) {
+        if (elapsed >= hoverStart && elapsed < hoverEnd && isCatDropActive()) {
+          ufo.nextDropAt = ufoNow + 1_400;
+        }
+        while (!isCatDropActive() && elapsed >= hoverStart && elapsed < hoverEnd && ufoNow >= ufo.nextDropAt) {
           const goldenChance = getGoldenChance();
           const isGolden = Math.random() < goldenChance;
           const spec: TomatoSpec = {
@@ -2233,7 +2679,11 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         const dropAreaMargin = (bounds.right - bounds.left) * 0.08;
         const dropAreaLeft = bounds.left + dropAreaMargin;
         const dropAreaRight = bounds.right - dropAreaMargin;
-        while (elapsed >= event.entryDuration
+        if (elapsed >= event.entryDuration && elapsed < hoverEnd && isCatDropActive()) {
+          event.nextDropAt = ufoNow + 1_500 + Math.random() * 500;
+        }
+        while (!isCatDropActive()
+          && elapsed >= event.entryDuration
           && elapsed < hoverEnd
           && ufoNow >= event.nextDropAt) {
           const spec = createTomatoSpec(true);
@@ -2310,6 +2760,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       cancelAnimationFrame(frame);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       Matter.Events.off(engine, "collisionStart", handleStrongImpact);
+      Matter.Events.off(engine, "collisionActive", handleActiveSleepingContact);
       Matter.Events.off(engine, "beforeUpdate", handleBeforeUpdate);
       Matter.Events.off(engine, "afterUpdate", handleAfterUpdate);
       Engine.clear(engine);

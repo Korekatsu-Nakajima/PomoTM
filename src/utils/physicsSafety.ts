@@ -1,7 +1,7 @@
 import Matter from "matter-js";
 import type { TomatoBodyData } from "@/types/game";
 
-const { Body } = Matter;
+const { Body, Sleeping } = Matter;
 
 type SanitizeWorldBodiesOptions = {
   reportPhysicsDiagnostic: (reason: string, detail: string, body?: Matter.Body) => void;
@@ -30,6 +30,7 @@ export const correctDeepTomatoOverlap = (bodyA: Matter.Body, bodyB: Matter.Body)
   const totalMovableWeight = movableWeightA + movableWeightB;
   if (totalMovableWeight === 0) return;
   if (movableWeightA > 0) {
+    if (bodyA.isSleeping) Sleeping.set(bodyA, false);
     const correctionShare = correctionDistance * movableWeightA / totalMovableWeight;
     Body.setPosition(bodyA, {
       x: bodyA.position.x - directionX * correctionShare,
@@ -37,6 +38,7 @@ export const correctDeepTomatoOverlap = (bodyA: Matter.Body, bodyB: Matter.Body)
     });
   }
   if (movableWeightB > 0) {
+    if (bodyB.isSleeping) Sleeping.set(bodyB, false);
     const correctionShare = correctionDistance * movableWeightB / totalMovableWeight;
     Body.setPosition(bodyB, {
       x: bodyB.position.x + directionX * correctionShare,

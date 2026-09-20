@@ -1,6 +1,6 @@
 "use client";
 
-import { Disc3, Radio, Sparkles, Store, X } from "lucide-react";
+import { Cloud, CopyPlus, Disc3, Radio, Rocket, Sparkles, Store, X } from "lucide-react";
 import type { ShopItemProps, ShopModalProps } from "@/types/game";
 import { formatBuffTime } from "@/utils/gameUtils";
 
@@ -15,7 +15,8 @@ export function ShopModal({
   currentAltitude,
   activeBuffs,
   buffRemaining,
-  onPurchaseItem,
+  itemCounts,
+  onUseItem,
   onUnlockUfo,
   onUnlockOctopus,
   isBreak,
@@ -30,8 +31,8 @@ export function ShopModal({
       <section className={`w-full max-w-lg rounded-3xl border p-6 shadow-2xl ${isBreak ? "border-neutral-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900"}`} role="dialog" aria-modal="true" aria-labelledby="shop-title" onMouseDown={(event) => event.stopPropagation()}>
         <header className="mb-6 flex items-center justify-between gap-4">
           <div>
-            <h2 id="shop-title" className="flex items-center gap-2 text-xl font-black"><Store className={isBreak ? "text-emerald-500" : "text-red-500"} />アイテム交換所</h2>
-            <p className={`mt-1 text-sm ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>金トマトをアイテムと交換できます</p>
+            <h2 id="shop-title" className="flex items-center gap-2 text-xl font-black"><Store className={isBreak ? "text-emerald-500" : "text-red-500"} />アイテム管理</h2>
+            <p className={`mt-1 text-sm ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>獲得したアイテムの確認と使用ができます</p>
           </div>
           <button className={quietClass} aria-label="ショップを閉じる" onClick={onClose}><X size={18} /></button>
         </header>
@@ -44,20 +45,20 @@ export function ShopModal({
           )}
         </div>
         <div className="grid gap-3">
-          <ShopItem title="ダブルドロップ" description="1回の供給量を増やすためのアイテムです。（有効時間: 30分）" cost={3} active={activeBuffs.doubleDrop} remainingSeconds={buffRemaining.doubleDrop} affordable={goldTomatoCount >= 3} onActivate={() => onPurchaseItem("doubleDrop", 3)} light={isBreak} />
+          <ShopItem title="ダブルドロップ" description="1回の供給量を増やすためのアイテムです。（有効時間: 30分）" icon={<CopyPlus size={16} />} count={itemCounts.doubleDrop} active={activeBuffs.doubleDrop} remainingSeconds={buffRemaining.doubleDrop} onActivate={() => onUseItem("doubleDrop")} light={isBreak} />
           <ShopItem
             title={currentAltitude >= 3_000 ? "ロケットブースト" : "気球ブースト"}
             description={currentAltitude >= 3_000
               ? "ロケットイベントを強化するためのアイテムです。（有効時間: 30分）"
               : "気球イベントを強化するためのアイテムです。（有効時間: 30分）"}
-            cost={5}
+            icon={currentAltitude >= 3_000 ? <Rocket size={16} /> : <Cloud size={16} />}
+            count={itemCounts.balloonBoost}
             active={activeBuffs.balloonBoost}
             remainingSeconds={buffRemaining.balloonBoost}
-            affordable={goldTomatoCount >= 5}
-            onActivate={() => onPurchaseItem("balloonBoost", 5)}
+            onActivate={() => onUseItem("balloonBoost")}
             light={isBreak}
           />
-          <ShopItem title="ゴールドブースト" description="金トマトの出現確率をアップさせるアイテムです。（有効時間: 30分）" cost={10} active={activeBuffs.goldBoost} remainingSeconds={buffRemaining.goldBoost} affordable={goldTomatoCount >= 10} onActivate={() => onPurchaseItem("goldBoost", 10)} light={isBreak} />
+          <ShopItem title="ゴールドブースト" description="金トマトの出現確率をアップさせるアイテムです。（有効時間: 30分）" icon={<Sparkles size={16} />} count={itemCounts.goldBoost} active={activeBuffs.goldBoost} remainingSeconds={buffRemaining.goldBoost} onActivate={() => onUseItem("goldBoost")} light={isBreak} />
           <article className={`flex items-center justify-between gap-4 rounded-2xl border p-4 ${isBreak ? "border-violet-300 bg-violet-50" : "border-violet-500/30 bg-violet-950/20"}`}>
             <div>
               <h3 className="flex items-center gap-2 font-bold"><Disc3 className="text-violet-400" size={18} />宇宙タコアンロック</h3>
@@ -76,21 +77,28 @@ export function ShopModal({
   );
 }
 
-function ShopItem({ title, description, cost, active, remainingSeconds, affordable, onActivate, light }: ShopItemProps) {
+function ShopItem({ title, description, icon, count, active, remainingSeconds, onActivate, light }: ShopItemProps) {
   return (
     <article className={`flex items-center justify-between gap-4 rounded-2xl border p-4 ${light ? "border-neutral-300 bg-neutral-100" : "border-neutral-800 bg-neutral-950/70"}`}>
       <div>
         <h3 className="font-bold">{title}</h3>
         <p className={`mt-1 text-sm ${light ? "text-neutral-600" : "text-neutral-400"}`}>{description}</p>
       </div>
-      {active ? (
-        <div className="shrink-0 text-center">
-          <span className="block rounded-full border border-emerald-400/70 bg-emerald-400/15 px-3 py-2 text-xs font-black tracking-wide text-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.24)]">ACTIVE</span>
-          <span className="mt-1 block text-[11px] font-bold tabular-nums text-emerald-300">{formatBuffTime(remainingSeconds)}</span>
-        </div>
-      ) : (
-        <button className={`${button} shrink-0 ${light ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} disabled={!affordable} onClick={onActivate}>交換 <Sparkles size={15} />× {cost}</button>
-      )}
+      <div className="flex shrink-0 flex-col items-center gap-1.5">
+        <span className={`inline-flex min-w-16 items-center justify-center gap-1 rounded-full border px-3 py-1.5 text-xs font-black ${light ? "border-neutral-300 bg-white text-neutral-800" : "border-neutral-700 bg-zinc-900 text-zinc-100"}`}>{icon}× {count}</span>
+        {active ? (
+          <button
+            className={`${button} pointer-events-none w-full border border-emerald-400/70 bg-emerald-400/15 text-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.24)] disabled:opacity-100`}
+            type="button"
+            disabled
+            aria-label={`使用中 残り${formatBuffTime(remainingSeconds)}`}
+          >
+            <span className="tabular-nums">{formatBuffTime(remainingSeconds)}</span>
+          </button>
+        ) : (
+          <button className={`${button} w-full ${light ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} disabled={count < 1} onClick={onActivate}>{count < 1 ? "未所持" : "使用"}</button>
+        )}
+      </div>
     </article>
   );
 }

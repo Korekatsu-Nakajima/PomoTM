@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Coffee, Disc3, FastForward, Gift, Pause, Pencil, Play, Repeat, RotateCcw, Sparkles, Store, Zap } from "lucide-react";
+import { Cat, Coffee, Disc3, FastForward, Pause, Pencil, Play, Repeat, RotateCcw, Sparkles, Store, Zap } from "lucide-react";
 import { PhysicsCanvas, type PhysicsCanvasHandle } from "@/components/PhysicsCanvas";
 import { AdContainer } from "@/components/AdContainer";
+import { RewardModal } from "@/components/RewardModal";
 import { ShopModal } from "@/components/ShopModal";
 import { useDebugMode } from "@/hooks/useDebugMode";
 import { useTimer } from "@/hooks/useTimer";
 import { saveLocalStorage, useGameStorage } from "@/hooks/useGameStorage";
 import { CONFIG, type TomatoCounts, type TimerMode } from "@/lib/config";
-import type { ActiveBuffs, BuffKey, BuffRemaining, UnlockedItems } from "@/types/game";
+import type { ActiveBuffs, BuffKey, BuffRemaining, ItemCounts, UnlockedItems } from "@/types/game";
 import {
   BUFF_DURATION_SECONDS,
   BONUS_BREAK_GOLDEN_CHANCE,
@@ -21,6 +22,7 @@ import {
 
 const button = "inline-flex shrink-0 items-center justify-center gap-1 rounded-full px-2.5 py-2 text-xs font-bold transition hover:-translate-y-0.5 disabled:cursor-default disabled:opacity-40 disabled:hover:translate-y-0 sm:gap-1.5 sm:px-3 sm:text-sm";
 const quiet = `${button} bg-zinc-800 text-zinc-100 ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700`;
+const INITIAL_ITEM_COUNTS: ItemCounts = { doubleDrop: 0, balloonBoost: 0, goldBoost: 0 };
 
 export default function Home() {
   const isDebugMode = useDebugMode();
@@ -29,6 +31,7 @@ export default function Home() {
   const [goldenTomatoes, setGoldenTomatoes] = useState(0);
   const [activeBuffs, setActiveBuffs] = useState<ActiveBuffs>(INITIAL_BUFFS);
   const [buffRemaining, setBuffRemaining] = useState<BuffRemaining>(INITIAL_BUFF_REMAINING);
+  const [itemCounts, setItemCounts] = useState<ItemCounts>(INITIAL_ITEM_COUNTS);
   const [unlockedItems, setUnlockedItems] = useState<UnlockedItems>(INITIAL_UNLOCKED_ITEMS);
   const [shopOpen, setShopOpen] = useState(false);
   const [hydrated, setHydrated] = useState(false);
@@ -36,11 +39,17 @@ export default function Home() {
   const [maxAltitude, setMaxAltitude] = useState(0);
   const [totalGoldTomatoes, setTotalGoldTomatoes] = useState(0);
   const [debugUfoMode, setDebugUfoMode] = useState(false);
+  const [debugCatMode, setDebugCatMode] = useState(false);
   const [rewardOpen, setRewardOpen] = useState(false);
   const [rewardWatching, setRewardWatching] = useState(false);
   const [rewardSeconds, setRewardSeconds] = useState(5);
+  const [itemRewardOpen, setItemRewardOpen] = useState(false);
+  const [itemRewardRevealed, setItemRewardRevealed] = useState(false);
+  const [pendingItemReward, setPendingItemReward] = useState<BuffKey | null>(null);
   const [isBonusBreakMode, setIsBonusBreakMode] = useState(false);
   const timerModeRef = useRef<TimerMode>("focus");
+  const pendingItemRewardRef = useRef<BuffKey | null>(null);
+  const itemRewardGrantedRef = useRef(false);
   useGameStorage({
     setCounts,
     goldenTomatoes,
@@ -49,6 +58,8 @@ export default function Home() {
     setActiveBuffs,
     buffRemaining,
     setBuffRemaining,
+    itemCounts,
+    setItemCounts,
     unlockedItems,
     setUnlockedItems,
     hydrated,
@@ -88,17 +99,11 @@ export default function Home() {
     setAltitude(nextAltitude);
     setMaxAltitude((current) => Math.max(current, nextAltitude));
   }, []);
-  const activateBuff = (key: BuffKey, cost: number) => {
-    if (activeBuffs[key] || goldenTomatoes < cost) return;
-    physics.current?.removeGolden(cost);
-    setGoldenTomatoes((current) => current - cost);
+  const useBuffItem = (key: BuffKey) => {
+    if (activeBuffs[key] || itemCounts[key] < 1) return;
+    setItemCounts((current) => ({ ...current, [key]: Math.max(0, current[key] - 1) }));
     setActiveBuffs((current) => ({ ...current, [key]: true }));
     setBuffRemaining((current) => ({ ...current, [key]: BUFF_DURATION_SECONDS }));
-    setCounts((current) => {
-      const next = { ...current, gold: Math.max(0, current.gold - cost) };
-      saveLocalStorage(CONFIG.storageKey, next);
-      return next;
-    });
   };
   const unlockUfo = () => {
     const cost = 100;
@@ -130,14 +135,45 @@ export default function Home() {
     setRewardWatching(false);
     setRewardSeconds(5);
   }, []);
+  const drawRandomItem = useCallback((): BuffKey => {
+    const roll = Math.random();
+    return roll < 0.4
+      ? "doubleDrop"
+      : roll < 0.8
+        ? "balloonBoost"
+        : "goldBoost";
+  }, []);
+  const openPendingItemReward = useCallback((bonusBreak: boolean) => {
+    const reward = pendingItemRewardRef.current;
+    setRewardWatching(false);
+    setRewardOpen(false);
+    setRewardSeconds(5);
+    setIsBonusBreakMode(bonusBreak);
+    setItemRewardRevealed(false);
+    if (!reward) {
+      setItemRewardOpen(false);
+      return;
+    }
+    if (!itemRewardGrantedRef.current) {
+      itemRewardGrantedRef.current = true;
+      setItemCounts((current) => ({ ...current, [reward]: current[reward] + 1 }));
+    }
+    setItemRewardOpen(true);
+  }, []);
   const handleSessionComplete = useCallback(() => {
     if (timerModeRef.current === "break") {
       clearBonusBreakState();
       return;
     }
+    const reward = drawRandomItem();
+    pendingItemRewardRef.current = reward;
+    itemRewardGrantedRef.current = false;
+    setPendingItemReward(reward);
+    setItemRewardOpen(false);
+    setItemRewardRevealed(false);
     clearBonusBreakState();
     setRewardOpen(true);
-  }, [clearBonusBreakState]);
+  }, [clearBonusBreakState, drawRandomItem]);
   const timer = useTimer(awardTomato, handleSessionComplete, isDebugMode);
   const pauseTomatoCycle = useCallback(() => {
     timer.pause();
@@ -147,7 +183,7 @@ export default function Home() {
   }, [timer.start]);
   useEffect(() => {
     const handleSpaceToggle = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || event.repeat || rewardOpen || rewardWatching) return;
+      if (event.code !== "Space" || event.repeat || rewardOpen || rewardWatching || itemRewardOpen) return;
       const target = event.target;
       if (target instanceof HTMLElement
         && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName))) return;
@@ -157,7 +193,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", handleSpaceToggle);
     return () => window.removeEventListener("keydown", handleSpaceToggle);
-  }, [pauseTomatoCycle, resumeTomatoCycle, rewardOpen, rewardWatching, timer.running]);
+  }, [itemRewardOpen, pauseTomatoCycle, resumeTomatoCycle, rewardOpen, rewardWatching, timer.running]);
   const selectTimerMode = (mode: TimerMode) => {
     clearBonusBreakState();
     timer.selectMode(mode);
@@ -171,7 +207,10 @@ export default function Home() {
     if (timer.mode !== "break") clearBonusBreakState();
   }, [clearBonusBreakState, timer.mode]);
   useEffect(() => {
-    if (!isDebugMode) setDebugUfoMode(false);
+    if (!isDebugMode) {
+      setDebugUfoMode(false);
+      setDebugCatMode(false);
+    }
   }, [isDebugMode]);
   useEffect(() => {
     if (timer.mode === "break" && timer.remaining === 0) clearBonusBreakState();
@@ -189,11 +228,8 @@ export default function Home() {
   }, [rewardWatching]);
   useEffect(() => {
     if (!rewardWatching || rewardSeconds > 0) return;
-    setRewardWatching(false);
-    setRewardOpen(false);
-    setIsBonusBreakMode(true);
-    timer.start();
-  }, [rewardSeconds, rewardWatching, timer.start]);
+    openPendingItemReward(true);
+  }, [openPendingItemReward, rewardSeconds, rewardWatching]);
   useEffect(() => {
     if (!isBonusBreakMode || timer.mode !== "break" || !timer.running) return;
     const bonusSupplyTimer = window.setInterval(() => {
@@ -266,6 +302,7 @@ export default function Home() {
               isOctopusUnlocked={unlockedItems.octopus}
               isDebugMode={isDebugMode}
               debugUfoMode={isDebugMode && debugUfoMode}
+              debugCatMode={isDebugMode && debugCatMode}
               isBonusBreakMode={isBonusBreakMode}
               timerMode={timer.mode}
               isTimerRunning={timer.running}
@@ -303,9 +340,34 @@ export default function Home() {
                   aria-label={`UFOデバッグモード ${debugUfoMode ? "ON" : "OFF"}`}
                   title="UFOデバッグモード"
                   aria-pressed={debugUfoMode}
-                  onClick={() => setDebugUfoMode((enabled) => !enabled)}
+                  onClick={() => {
+                    const next = !debugUfoMode;
+                    setDebugUfoMode(next);
+                    if (next) setDebugCatMode(false);
+                  }}
                 >
                   <Disc3 aria-hidden="true" className="text-sky-400" size={18} />
+                </button>
+              )}
+              {isDebugMode && (
+                <button
+                  className={`${button} border ${debugCatMode
+                    ? isBreak
+                      ? "border-cyan-500/70 bg-cyan-100 text-cyan-800"
+                      : "border-cyan-400/70 bg-cyan-400/10 text-cyan-200"
+                    : isBreak
+                      ? "border-neutral-300 bg-white/80 text-neutral-700"
+                      : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
+                  aria-label={`猫デバッグモード ${debugCatMode ? "ON" : "OFF"}`}
+                  title="猫デバッグモード"
+                  aria-pressed={debugCatMode}
+                  onClick={() => {
+                    const next = !debugCatMode;
+                    setDebugCatMode(next);
+                    if (next) setDebugUfoMode(false);
+                  }}
+                >
+                  <Cat aria-hidden="true" className="text-sky-400" size={18} />
                 </button>
               )}
               {isDebugMode && (
@@ -331,38 +393,32 @@ export default function Home() {
             currentAltitude={altitude}
             activeBuffs={activeBuffs}
             buffRemaining={buffRemaining}
-            onPurchaseItem={activateBuff}
+            itemCounts={itemCounts}
+            onUseItem={useBuffItem}
             onUnlockUfo={unlockUfo}
             onUnlockOctopus={unlockOctopus}
             isBreak={isBreak}
           />
-          {rewardOpen && (
-            <div className={`absolute inset-0 z-[60] grid place-items-center p-4 backdrop-blur-md ${isBreak ? "bg-neutral-200/85" : "bg-neutral-950/85"}`}>
-              <section className={`w-full max-w-md rounded-3xl border p-6 text-center shadow-2xl ${isBreak ? "border-emerald-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900 text-white"}`} role="dialog" aria-modal="true" aria-labelledby="reward-title">
-                <Gift className="mx-auto mb-3 text-amber-400" size={40} />
-                <h2 id="reward-title" className="text-xl font-black">お疲れ様でした！</h2>
-                <p className={`mt-3 text-sm leading-relaxed ${isBreak ? "text-neutral-600" : "text-neutral-300"}`}>
-                  動画を見て休憩ボーナストマトモードを発動（5分間）
-                </p>
-                {rewardWatching ? (
-                  <div className="mt-6 rounded-2xl border border-amber-400/40 bg-black/80 p-8 text-white">
-                    <p className="text-xs font-bold tracking-[0.25em] text-white/60">REWARD VIDEO</p>
-                    <p className="mt-3 text-5xl font-black tabular-nums">{rewardSeconds}</p>
-                    <p className="mt-2 text-xs text-white/60">再生完了までお待ちください</p>
-                  </div>
-                ) : (
-                  <div className="mt-6 grid gap-3">
-                    <button className={`${button} w-full bg-amber-400 text-neutral-950`} onClick={() => { setRewardSeconds(5); setRewardWatching(true); }}>
-                      <Play size={18} fill="currentColor" />動画を見てボーナス獲得
-                    </button>
-                    <button className={`${button} w-full ${isBreak ? "bg-neutral-200 text-neutral-800" : "bg-neutral-800 text-neutral-200"}`} onClick={() => { clearBonusBreakState(); timer.start(); }}>
-                      スキップして通常休憩
-                    </button>
-                  </div>
-                )}
-              </section>
-            </div>
-          )}
+          <RewardModal
+            rewardOpen={rewardOpen}
+            rewardWatching={rewardWatching}
+            rewardSeconds={rewardSeconds}
+            itemRewardOpen={itemRewardOpen}
+            itemReward={pendingItemReward}
+            itemRewardRevealed={itemRewardRevealed}
+            isBreak={isBreak}
+            onStartVideo={() => { setRewardSeconds(5); setRewardWatching(true); }}
+            onSkipVideo={() => openPendingItemReward(false)}
+            onRevealItem={() => setItemRewardRevealed(true)}
+            onAcceptItem={() => {
+              setItemRewardOpen(false);
+              setItemRewardRevealed(false);
+              setPendingItemReward(null);
+              pendingItemRewardRef.current = null;
+              itemRewardGrantedRef.current = false;
+              timer.start();
+            }}
+          />
         </section>
         <AdContainer
           variant="desktop"

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { CONFIG, type TomatoCounts } from "@/lib/config";
-import type { ActiveBuffs, BuffRemaining, SavedCameraState, UnlockedItems } from "@/types/game";
+import type { ActiveBuffs, BuffRemaining, ItemCounts, SavedCameraState, UnlockedItems } from "@/types/game";
 import {
   BUFF_DURATION_SECONDS,
   INITIAL_BUFF_REMAINING,
@@ -27,6 +27,8 @@ type UseGameStorageOptions = {
   setActiveBuffs: Dispatch<SetStateAction<ActiveBuffs>>;
   buffRemaining: BuffRemaining;
   setBuffRemaining: Dispatch<SetStateAction<BuffRemaining>>;
+  itemCounts: ItemCounts;
+  setItemCounts: Dispatch<SetStateAction<ItemCounts>>;
   unlockedItems: UnlockedItems;
   setUnlockedItems: Dispatch<SetStateAction<UnlockedItems>>;
   hydrated: boolean;
@@ -43,6 +45,11 @@ export const saveLocalStorage = (key: string, value: unknown) => {
   } catch {
     return;
   }
+};
+
+const readStoredItemCount = (value: unknown) => {
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 0 && count <= MAX_SAFE_SAVED_TOMATOES ? count : 0;
 };
 
 const readStoredCounts = (): TomatoCounts => {
@@ -94,6 +101,8 @@ export function useGameStorage({
   setActiveBuffs,
   buffRemaining,
   setBuffRemaining,
+  itemCounts,
+  setItemCounts,
   unlockedItems,
   setUnlockedItems,
   hydrated,
@@ -144,6 +153,11 @@ export function useGameStorage({
         balloonBoost: balloonBoostRemaining,
         goldBoost: goldBoostRemaining,
       });
+      setItemCounts({
+        doubleDrop: readStoredItemCount(progress?.itemCounts?.doubleDrop),
+        balloonBoost: readStoredItemCount(progress?.itemCounts?.balloonBoost),
+        goldBoost: readStoredItemCount(progress?.itemCounts?.goldBoost),
+      });
       setUnlockedItems({
         ufo: progress?.unlockedItems?.ufo === true,
         bird: progress?.unlockedItems?.bird === true,
@@ -186,6 +200,7 @@ export function useGameStorage({
       setGoldenTomatoes(0);
       setActiveBuffs(INITIAL_BUFFS);
       setBuffRemaining(INITIAL_BUFF_REMAINING);
+      setItemCounts({ doubleDrop: 0, balloonBoost: 0, goldBoost: 0 });
       setUnlockedItems(INITIAL_UNLOCKED_ITEMS);
       try { localStorage.removeItem(PROGRESS_STORAGE_KEY); } catch { /* Storage is unavailable. */ }
     }
@@ -193,8 +208,8 @@ export function useGameStorage({
   }, []);
   useEffect(() => {
     if (!hydrated) return;
-    saveLocalStorage(PROGRESS_STORAGE_KEY, { goldenTomatoes, activeBuffs, buffRemaining, unlockedItems });
-  }, [activeBuffs, buffRemaining, goldenTomatoes, hydrated, unlockedItems]);
+    saveLocalStorage(PROGRESS_STORAGE_KEY, { goldenTomatoes, activeBuffs, buffRemaining, itemCounts, unlockedItems });
+  }, [activeBuffs, buffRemaining, goldenTomatoes, hydrated, itemCounts, unlockedItems]);
   useEffect(() => {
     if (!hydrated) return;
     saveLocalStorage(UNLOCKED_ITEMS_STORAGE_KEY, {

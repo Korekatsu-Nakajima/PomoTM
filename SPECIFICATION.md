@@ -10,7 +10,7 @@
 - `Matter.Engine.update(engine, safeDelta)` はタイマーの再生・停止とは独立して毎フレーム実行する。ページが非表示の場合も、`Engine.update` 実行後に描画処理をスキップする順序を維持する。
 - 現在の物理デルタ上限は `16.666ms` である。過去資料にある `33.33ms` へ戻してはならない。
 - タイマー・React Stateの最新値は、長寿命なMatter.js描画クロージャへ `Ref` 経由で渡している。この同期構造を通常のクロージャ参照へ安易に置換しない。
-- 個別トマトの座標は永続化しない。保存・復元対象はカウント、所持金、バフ、アンロック、最高標高、カメラ状態である。
+- 個別トマトの座標は永続化しない。保存・復元対象はカウント、所持金、アイテム所持数、バフ、アンロック、最高標高、カメラ状態である。
 - `src/app/page.tsx` のレイヤー順、広告領域、モバイル時のCanvas開始位置、共通フッターの左下配置を維持する。
 
 ## 1. アプリ概要・主要機能
@@ -42,18 +42,21 @@
 - `page.tsx` 側が集中完了を検知してリワードモーダルを開き、直後に休憩タイマーを一時停止する。
 - 休憩完了時は集中モードへ戻し、25分に設定して停止する。
 - Repeatアイコンの自動切替StateとトグルUIは存在するが、現在の `useTimer` の完了分岐は `autoLoopEnabled` / `autoLoopRef` を参照していない。現在の実挙動は上記の固定遷移である。
-- Spaceキーは再生／一時停止を切り替える。キーリピート中、リワードモーダル表示中、動画再生中、入力要素・選択要素・ボタン・contenteditableにフォーカス中は無効。
+- Spaceキーは再生／一時停止を切り替える。キーリピート中、リワードモーダル表示中、動画再生中、アイテム宝箱モーダル表示中、入力要素・選択要素・ボタン・contenteditableにフォーカス中は無効。
 - ブラウザタイトルは `MM:SS · 集中` または `MM:SS · 休憩` に更新する。
 
 ### 1.3 リワード動画とボーナス休憩
 
 - 集中完了後にリワードモーダルを表示する。
+- 集中完了時にDouble Drop 40%、Balloon / Rocket Boost 40%、Gold Boost 20%の1回抽選を行い、その結果を保留中の報酬として固定する。
 - 「動画を見てボーナス獲得」は5秒の疑似動画カウントダウンを開始する。
-- 完了後は `isBonusBreakMode = true` とし、休憩タイマーを再開する。
-- スキップ時はボーナス状態を消去し、通常休憩を開始する。
+- 動画完了後は `isBonusBreakMode = true`、スキップ時は `false` とし、どちらも広告選択モーダルを閉じた直後にアイテム宝箱モーダルを表示する。
+- 宝箱モーダル表示時に保留中のアイテムをインベントリへ1回だけ加算する。`pendingItemRewardRef` と `itemRewardGrantedRef` で抽選結果を固定し、二重付与を防ぐ。
+- 宝箱モーダルは、Giftアイコンと「Touch!」を表示する開封前、アイテム名・Lucideピクトグラム・効果説明・受取ボタンを表示する開封後の2段階である。
+- 「受け取る」で宝箱モーダルを閉じた後に休憩タイマーを再開する。
 - ボーナス休憩中かつ休憩タイマー再生中は、1.5秒間隔でトマトを供給する。
 - ボーナス状態は、休憩完了、残り0、モード切替、リセット、集中モードへの遷移時に消去する。
-- リワードモーダル中もMatter.jsの `Engine.update` は停止しない。
+- リワード動画・宝箱モーダル中もMatter.jsの `Engine.update` は停止しない。
 
 ### 1.4 トマト抽選仕様
 
@@ -174,6 +177,19 @@
 | 10,000m以上 | Satellite | Planeから100%切替。136px相当、9.5〜10.5秒横断、開始・終了Yを各20〜30%から独立抽選、10秒で1回転、初期角度ランダム、不透明度0.35 |
 | 10,000m以上 | Satellite Radio | 2〜5秒のランダム間隔、および投下前後にサイバーブルーの3重波紋。トマトは衛星下部直下から投下 |
 
+猫ドロップ演出:
+
+- 通常供給開始時に、通常は1/1,000、統合デバッグモード時は1/100で猫ドロップを一度だけ抽選し、結果をその供給の単一フラグとして使用する。猫が当選した場合はBalloon分岐より猫を優先し、高度に応じたBird、Plane、Satelliteが猫だけを運ぶ。
+- 猫キャリアの運搬中および猫の落下中は、通常キャリア、Balloon、Rocket、UFO、Space Octopusを含む全投下経路でトマトMatter Body生成、Gold獲得コールバック、Double Dropによる追加生成を行わない。停止中の連続投下時刻は現在時刻基準へ送り、猫終了後の蓄積一括投下を防止する。
+- 猫は通常トマト直径の1.5〜2.25倍。提示された2つのSVGフレームを90ms間隔で切り替え、運搬・落下・着地走行の全フェーズで同一サイズを使用する。キャリア保持中は短い保持線とともに描画する。
+- 投下後の猫はMatter Bodyではない軽量な演出イベントである。既存トマト円、通常床、再開時Cloud Floor、Terrainの表面位置を読み取り専用で調べて着地する。
+- 着地時に左右をランダム決定し、125ms間隔の2コマ歩行で水平移動する。山の表面高へ追従するが、トマトへ力・速度・Sleep解除を一切適用しない。
+- 標高とカメラの算出対象は `activeBodies`、`sleepingBodies`、アーカイブTerrainのトマト境界だけであり、`catEvents` の座標は参照しない。高度計算用Setへ非トマトBodyが混入した場合は `[CatDiagnostic]` を出力する。
+- 猫表面探索では、読み取り前後のトマトBody位置・速度・Force・Sleep状態を比較し、通常時／統合デバッグ時を問わず変更が検出された場合のみ `[CatDiagnostic]` エラーを出力する。比較処理自体はBodyを変更しない。
+- 猫の位置・落下速度・サイズ・カメラ境界のNaN／Infinity、可視領域から極端に離れた座標、異常速度を毎フレーム検査し、異常時だけ2秒間隔で抑制された警告またはエラーを出力する。
+- 可視範囲の左右外、または下方クリーンアップ線を越えた猫は演出配列から削除する。Matter Worldへ猫Bodyは追加しない。
+- 猫色はFocusテーマで白、Breakテーマで黒へ反転する。
+
 追加イベント:
 
 - Shooting Star: 3,000m以上、60秒ごとに18%、同時1つ、寿命0.8〜1.5秒。
@@ -191,28 +207,34 @@
   2. 背景Canvas、アーカイブTerrain、Cloud Floor。
   3. SleepingトマトのキャッシュCanvas。
   4. Active / pending sleepingトマト。
-  5. 果汁、飛行機雲、キャリア、UFO、Octopus、Alien。
+  5. 果汁、飛行機雲、落下・走行中の猫、キャリア、UFO、Octopus、Alien。
   6. 物理異常診断オーバーレイ。
 - SleepingトマトはオフスクリーンCanvasへまとめ、最低500ms間隔または強制dirty時に再構築する。
 - トマト画像URLが空の場合はCanvas図形で描画する。赤／金のマットな円、輪郭、5枚の緑色ヘタを描く。表面ハイライトは描かない。
 - 完熟度は約700msで通常赤から濃い赤へ補間する。
 - Birdが運搬中のトマト、各キャリア投下前のトマト、物理Bodyのトマトは同じ `drawTomato` を使用する。
+- 猫の2コマPath2Dはキャリアより背面、トマトより前面に描画する。猫の表面追従判定はBodyを読み取るだけで、MatterイベントやBody管理Setを変更しない。
 
 ### 1.12 ショップ、通貨、バフ
 
 - 通貨は所持Goldトマト。金トマトが物理Worldへ生成された時に加算する。
-- 購入時は通貨と論理カウントを減らし、物理World上のGold Bodyを山の上側（`bounds.min.y` が小さい順）から消費数まで削除する。World上のGoldが不足してもエラーにしない。
+- 3種の消費型バフはGold交換ではなく、集中完了報酬で獲得した所持アイテムを1個消費して有効化する。
+- UFOおよびSpace Octopusの永久解放では従来どおりGoldを消費する。消費時は通貨と論理カウントを減らし、物理World上のGold Bodyを山の上側（`bounds.min.y` が小さい順）から消費数まで削除する。World上のGoldが不足してもエラーにしない。
 - バフ時間は各30分。Focusかつタイマー再生中のみ1秒ずつ減算し、休憩中は減算しない。
 
-| アイテム | コスト | 効果 |
+| アイテム | 集中完了時の獲得率 | 使用条件・効果 |
 | --- | ---: | --- |
-| Double Drop | 3 Gold | 対応する1回の供給数を2個へ増加 |
-| Balloon / Rocket Boost | 5 Gold | 高度3,000m未満では気球、高度3,000m以上ではロケットの確率を2倍。UI文言だけ高度で切替、内部Stateは共通 `balloonBoost` |
-| Gold Boost | 10 Gold | 通常／ボーナスのGold率を2倍 |
+| Double Drop | 40% | 所持数を1消費し、対応する1回の供給数を30分間2個へ増加 |
+| Balloon / Rocket Boost | 40% | 所持数を1消費。高度3,000m未満では気球、高度3,000m以上ではロケットの確率を30分間2倍。UI文言だけ高度で切替、内部Stateは共通 `balloonBoost` |
+| Gold Boost | 20% | 所持数を1消費し、通常／ボーナスのGold率を30分間2倍 |
+
+| 永久解放 | Goldコスト | 効果 |
+| --- | ---: | --- |
 | UFO永久解放 | 100 Gold | UFOイベントを有効化 |
 | Space Octopus永久解放 | 1,000 Gold | 宇宙タコイベントを有効化 |
 
-- 有効なバフは `ACTIVE` と残り `MM:SS` を表示し、再購入不可。
+- Shopは3種の所持数をLucideアイコンと `× 数量` で表示する。未発動かつ所持数1以上の場合だけ使用でき、使用時に1個減算する。
+- 有効なバフは使用ボタン内部を残り時間 `MM:SS` 表示へ切り替え、押下不可にする。`ACTIVE` 表記およびボタン下の別行時間表示は使用しない。
 - ショップ末尾には「※休憩中はアイテムの減算は行われません。」を1回だけ表示する。
 
 ### 1.13 永続化
@@ -220,7 +242,7 @@
 | キー | 内容 |
 | --- | --- |
 | `tomato-focus:v1` | 論理獲得数 `{ normal, gold }` |
-| `tomato-focus:progress:v1` | 所持Gold、バフ状態・残時間、アンロック状態 |
+| `tomato-focus:progress:v1` | 所持Gold、3種のアイテム所持数、バフ状態・残時間、アンロック状態 |
 | `pomo_unlocked_items` | UFO / Octopus永久解放 |
 | `pomo_max_altitude` | 最高標高 |
 | `pomo_total_gold_tomatoes` | 累計Gold獲得数 |
@@ -263,7 +285,7 @@
 - `.no-scrollbar` によりFirefox、旧Edge/IE系、WebKitのスクロールバーを非表示にする。
 - ボタンは `shrink-0`。モバイルは小さなpadding・gap・text-xs、sm以上で通常サイズへ戻す。
 - 左グループ: Pencil 25m、Coffee 5m。
-- 右グループ: Play、Pause、Reset、Repeat、Shop、Gold所持数。統合デバッグモード時のみZap、UFOデバッグ、10sを追加表示する。
+- 右グループ: Play、Pause、Reset、Repeat、Shop、Gold所持数。統合デバッグモード時のみZap、UFOデバッグ、猫デバッグ、10sを追加表示する。
 - インタラクティブUIはCanvasより前面で、Canvasはポインターイベントを受け取らない。
 
 ### 2.4 広告枠
@@ -303,8 +325,8 @@
 ### 2.8 Shop / Reward Modal
 
 - Shopはカード全体を覆う絶対配置。背景クリックで閉じ、ダイアログ内のmousedownは伝播停止。
-- Shopカードは最大lg。所持Gold、UFO解放、3種バフ、Octopus解放を表示する。
-- RewardはShopより前の `z-[60]`、最大md。疑似動画中は5秒カウントを表示する。
+- Shopカードは最大lg。所持Gold、UFO解放、3種アイテムの所持数・使用操作・バフ残り時間、Octopus解放を表示する。消費アイテム発動中は使用ボタン自体が `MM:SS` 表示となり、追加の時間行は持たない。
+- RewardはShopより前の `z-[60]`、最大md。疑似動画中は5秒カウントを表示し、その後またはスキップ直後に同じトーンの2段階宝箱モーダルへ遷移する。
 - Break時はアプリ、カード、ボタン、モーダル、Canvas背景を明るいテーマへ遷移する。既存実装には休憩アクセントとしてemerald色が存在する。
 
 ## 3. 現在のデバッグ機能・制御仕様
@@ -328,31 +350,41 @@
 - OFFへ戻す際は通常UFO抽選時刻を再設定し、複数UFOが残っていれば1機へ縮小する。
 - `PhysicsCanvas` 内でも `isDebugModeRef && debugUfoModeRef` を有効条件とし、通常ユーザー環境ではUFOデバッグ処理へ入らない。
 
-### 3.3 10秒タイマースキップ
+### 3.3 猫デバッグ
+
+- 上部ツールバーでUFOデバッグボタンの隣に表示するCatアイコン。統合デバッグモード時のみ表示する。
+- React State `debugCatMode` を `PhysicsCanvas` の `debugCatModeRef` へ同期する。
+- ON時は通常供給の猫フラグを100%成立させ、Balloon分岐を使用せずBird、Plane、Satelliteから猫を単独ドロップする。モード中は全経路のトマトMatter Body生成を入口でも遮断する。
+- OFF時は既存の抽選を維持し、通常環境は1/1,000、統合デバッグ環境は1/100で猫の単独ドロップへ切り替える。
+- 猫デバッグとUFOデバッグは排他的に動作する。一方をONにすると他方をOFFにし、通常キャリアが停止するUFOデバッグ中に猫の検証経路が失われることを防ぐ。
+- 統合デバッグモードがOFFになった場合、`debugCatMode` と `debugUfoMode` をともにOFFへ戻す。デバッグON/OFF状態は永続化しない。
+
+### 3.4 10秒タイマースキップ
 
 - 統合デバッグモード時のみツールバーへ表示する。
 - FastForwardアイコンと `10s` 表記。
 - 押下時、現在の残り時間を10秒へ設定し、再生中ならdeadlineも更新する。
 - 本番ビルドでは描画しない。
 
-### 3.4 物理診断ログと画面オーバーレイ
+### 3.5 物理診断ログと画面オーバーレイ
 
 - NaN・Infinity検出、速度クランプ、異常Body除去は統合デバッグモードに関係なく常時有効。
 - `beforeUpdate` / `afterUpdate` でNaN・Infinityを検出した時に、安全処理は常に発火する。
 - 同一reason/body IDのログは2秒以内の重複出力を抑制する。
+- 猫関連の診断は `[CatDiagnostic]` として、標高の1フレーム10,000m以上の変化、カメラYの10,000以上の変化、非有限値、猫運動値の異常、表面読み取り中のBody変更を記録する。診断ログは状態を補正・停止せず観測のみ行う。
 - 統合デバッグモード時のみ、`console.error("[PhysicsDiagnostic]", ...)` へ原因、phase、Body詳細、Body数、カメラ、全トマトスナップショットを出力する。
 - 統合デバッグモード時のみ、Canvas左上付近 `(12, 76)` に赤い `PHYSICS ANOMALY DETECTED` オーバーレイを描く。
 - アラートは再代入またはコンポーネント再初期化まで保持され、自動消去タイマーはない。
 - 異常Bodyのみを除去し、World全体やエンジンは停止しない。
 
-### 3.5 その他の可視ステータス
+### 3.6 その他の可視ステータス
 
 - 右下に現在標高を常時表示する。
-- Shopに所持Gold、各バフのACTIVE状態と残時間、永久解放状態を表示する。
+- Shopに所持Gold、各アイテムの所持数、各バフのボタン内残り時間、永久解放状態を表示する。
 - Reward疑似動画中は残り秒を大きく表示する。
 - Adプレースホルダーは `data-ad-refresh` に30秒更新カウントを持つが、画面には数値表示しない。
 
-### 3.6 統合デバッグモード
+### 3.7 統合デバッグモード
 
 - 判定ロジックは `src/hooks/useDebugMode.ts` に一元化する。
 - 次のいずれかを満たす場合だけ `isDebugMode = true`。
@@ -371,7 +403,7 @@
 | ファイル | 責務 | 変更時の保護事項 |
 | --- | --- | --- |
 | `src/components/PhysicsCanvas.tsx` | Matter Engine/World所有、RAF、Body lifecycle、衝突、感染、Terrain、カメラ、全高度イベント、描画統括 | `Engine.update`の位置、Ref同期、Set間移動、イベント順、描画順を維持。最重要核心ファイル |
-| `src/app/page.tsx` | 全画面UI、React State、タイマー接続、Reward、Shop購入、Gold通貨、Spaceキー、広告配置 | z-index、モバイルCanvas top 7.75rem、ツールバーの横スクロールとno-scrollbar、モーダル制御を維持 |
+| `src/app/page.tsx` | 全画面UI、React State、タイマー接続、Reward、アイテム付与・使用、永久解放購入、Gold通貨、Spaceキー、広告配置 | z-index、モバイルCanvas top 7.75rem、ツールバーの横スクロールとno-scrollbar、モーダル制御を維持 |
 | `src/hooks/useTimer.ts` | 25/5分、deadline、通常・デバッグ供給、モード遷移 | Pauseと供給停止の連動、完了時コールバック順を維持 |
 | `src/hooks/useDebugMode.ts` | URL、公開環境変数、NODE_ENVから統合デバッグモードを判定 | 厳密な`debug === "true"`、SSR安全性、localStorage非使用を維持 |
 | `src/constants/assets.ts` | 確率、間隔、物理設定、保存キー、SVG Path、初期State | 数値変更はゲームバランスと永続化互換性へ直結 |
@@ -384,7 +416,8 @@
 | `src/app/layout.tsx` | Metadata、Analytics、Speed Insights、全ページ共通Privacy Footer |
 | `src/app/globals.css` | Tailwind読込、全画面overflow制御、button cursor、no-scrollbar |
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |
-| `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、購入UI |
+| `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI |
+| `src/components/RewardModal.tsx` | 疑似リワード動画UI、開封前の宝箱タップ演出、開封後の獲得アイテム詳細UI |
 | `src/components/AdContainer.tsx` | Desktop/Mobile広告プレースホルダー、30秒refresh state |
 | `src/hooks/useGameStorage.ts` | localStorageの検証付き読込・保存、カメラ状態API |
 | `src/utils/canvasRenderer.ts` | Tomatoおよび全CarrierのCanvas描画、SVG Path2D、Satellite電波 |
@@ -401,13 +434,16 @@ page.tsx
 ├─ useTimer
 │  └─ awardTomato() ──> PhysicsCanvas.drop(golden)
 ├─ useGameStorage
-│  └─ counts / currency / buffs / unlocks / altitude を永続化
+│  └─ counts / currency / item inventory / buffs / unlocks / altitude を永続化
 ├─ PhysicsCanvas
 │  ├─ onBonusTomato() ──> 論理獲得数更新
 │  ├─ onGoldenTomatoDrop() ──> 所持Gold・累計Gold更新
 │  └─ onAltitudeChange() ──> 現在標高・最高標高更新
 ├─ ShopModal
-│  └─ 購入時 PhysicsCanvas.removeGolden(count)
+│  ├─ 消費型アイテム使用時に所持数を1減らして30分バフを開始
+│  └─ 永久解放購入時のみ PhysicsCanvas.removeGolden(count)
+├─ RewardModal
+│  └─ 動画選択 ──> 宝箱表示 ──> アイテム詳細表示 ──> 休憩タイマー再開
 └─ AdContainer (mobile / desktop)
 ```
 
@@ -442,4 +478,5 @@ page.tsx
 - 3,000m、5,000m、10,000mのイベント境界と45秒／15秒切替を確認すること。
 - デバッグOFFでZap・UFO・10秒・診断ログ／表示が無効、デバッグONで従来機能が有効になること。物理診断の安全処理は常時動作すること。
 - Deep Coreの中央限定Static化、側面Dynamic、Terrain吸収の絶対Y基準を確認すること。
+- 猫の通常1/1,000・デバッグ1/100抽選、90ms運搬／落下アニメーション、125ms走行アニメーション、テーマ色反転、画面外削除を確認すること。猫の通過でSleeping Bodyが起床しないこと。
 - localStorage破損値でクラッシュせず、安全な初期値へ戻ること。

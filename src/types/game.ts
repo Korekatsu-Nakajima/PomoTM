@@ -1,4 +1,5 @@
 import type { TomatoCounts } from "@/lib/config";
+import type { ReactNode } from "react";
 
 export type PhysicsCanvasHandle = {
   drop: (golden: boolean) => void;
@@ -15,6 +16,7 @@ export type PhysicsCanvasProps = {
   isOctopusUnlocked: boolean;
   isDebugMode: boolean;
   debugUfoMode?: boolean;
+  debugCatMode?: boolean;
   isBonusBreakMode?: boolean;
   timerMode: "focus" | "break";
   isTimerRunning: boolean;
@@ -176,14 +178,15 @@ export type SavedCameraState = { scale: number; offsetY: number };
 export type BuffKey = "doubleDrop" | "balloonBoost" | "goldBoost";
 export type ActiveBuffs = Record<BuffKey, boolean>;
 export type BuffRemaining = Record<BuffKey, number>;
+export type ItemCounts = Record<BuffKey, number>;
 export type UnlockedItems = { ufo: boolean; bird: boolean; balloon: boolean; octopus: boolean };
 export type ShopItemProps = {
   title: string;
   description: string;
-  cost: number;
+  icon: ReactNode;
+  count: number;
   active: boolean;
   remainingSeconds: number;
-  affordable: boolean;
   onActivate: () => void;
   light: boolean;
 };
@@ -197,7 +200,8 @@ export type ShopModalProps = {
   currentAltitude: number;
   activeBuffs: ActiveBuffs;
   buffRemaining: BuffRemaining;
-  onPurchaseItem: (key: BuffKey, cost: number) => void;
+  itemCounts: ItemCounts;
+  onUseItem: (key: BuffKey) => void;
   onUnlockUfo: () => void;
   onUnlockOctopus: () => void;
   isBreak: boolean;
