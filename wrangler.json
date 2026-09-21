@@ -4,5 +4,15 @@
   "compatibility_date": "2026-09-21",
   "assets": {
     "directory": "./out"
-  }
+  },
+  "routes": [
+    {
+      "pattern": "pomotm.com",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.pomotm.com",
+      "custom_domain": true
+    }
+  ]
 }

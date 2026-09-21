@@ -302,8 +302,12 @@
 - Cloudflareへの本番配備方式はNext.js static exportとし、`next.config.ts`の `output: "export"` により `npm run build` がルートの `out` ディレクトリを生成する。
 - Cloudflare AssetsではNext.js Image Optimization serverを使用しないため、`next.config.ts`の `images.unoptimized` をtrueに固定する。
 - 正規のCloudflare設定はルートの `wrangler.json`。Worker名は `pomo-tm`、compatibility dateは `2026-09-21`、assets directoryは `./out` とする。静的assets-only配備のためWorker scriptの `main` は指定しない。
+- `wrangler.json` のCustom Domainは `pomotm.com` と `www.pomotm.com`。両routeを `custom_domain: true` として静的Assets Worker `pomo-tm`へ接続する。
 - Metadata Routeの `/manifest.webmanifest` は `src/app/manifest.ts` の `dynamic = "force-static"` により静的export対象とする。
 - `npm run deploy` は先に `npm run build`を完了し、その後 `wrangler deploy --config wrangler.json` を実行する。Wranglerを直接実行する場合も `wrangler.json` を明示し、旧OpenNext設定を参照させない。
+- `npm run preview` も `npm run build`後に `wrangler dev --config wrangler.json` を実行し、本番と同じ静的Assets設定を使用する。
+- 旧OpenNext経路は `output: "export"` で生成される現在の`.next`に存在しないstandalone server manifestを要求し、実行不能かつ本番deployから未参照だったため削除済みとする。`wrangler.toml`、`open-next.config.ts`、OpenNext専用npm scriptsおよび依存パッケージを戻さない。
+- 現在の `src` 実行コードはD1 bindingや `getCloudflareContext()` を参照していないため、静的deploy用 `wrangler.json` にD1 bindingを追加しない。将来D1を実装する場合は静的クライアントから直接接続せず、認証済みAPIを含む配備方式を改めて設計する。
 - 現在のクライアントアプリは静的export可能な構成を維持する。Server Actions、リクエスト依存の動的Route Handler、SSR必須APIを追加する場合は、静的配備との互換性を事前に再評価する。
 
 ## 2. UI / レイアウト仕様（崩してはいけない要素）
@@ -523,7 +527,7 @@
 | `.env.example` | Firebase Web Appの `NEXT_PUBLIC_FIREBASE_*` 環境変数例。実プロジェクト値は環境ごとに設定する |
 | `next.config.ts` | 開発オリジン許可、`output: "export"` による静的 `out` 生成 |
 | `wrangler.json` | `pomo-tm` の静的Assets設定。配信元は `./out` |
-| `package.json` | Next.js static build後に `wrangler.json` を明示してdeployする実行順序 |
+| `package.json` | Next.js static build後に `wrangler.json` を明示するpreview／本番deployの実行順序 |
 
 ### 4.3 コンポーネント間のデータフロー
 
@@ -598,6 +602,7 @@ page.tsx
 - `npm run build` で `/`、`/privacy` が生成されること。
 - `npm run build` で `out` が生成され、`out/index.html`、`out/privacy.html`、`out/manifest.webmanifest` が存在すること。
 - `npx wrangler deploy --dry-run --config wrangler.json` が `./out` のassetsを読み込み、entry-pointまたはassets directory missingを報告しないこと。
+- `wrangler.json` のCustom Domainが `pomotm.com` と `www.pomotm.com` の2件で、どちらも `custom_domain: true` であること。
 - Focus/Break/Pause/Reset/Spaceキー、Reward分岐、Bonus Break終了リセットを確認すること。
 - Matter.jsがタイマー停止中とページ非表示中にも更新されること。
 - 320px程度の狭い画面でツールバーが親幅を押し広げず、横スワイプでき、スクロールバーが見えないこと。
