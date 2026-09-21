@@ -297,15 +297,13 @@
 - `src/types/db.ts` は全6テーブルの行型、Insert/Update型、Subscription status unionを提供する。`isUserPremium()` はフラグに加えて期限切れも検査し、期限NULLの有効フラグは無期限として扱う。
 - `schema.sql` は新規DB構築用の正規定義であり、既存の本番D1へ推測で適用しない。既存テーブルへ反映する場合は、本番schemaを取得して差分マイグレーションを別途作成・レビューしてから実行する。
 
-### 1.17 Cloudflare Workers / OpenNextデプロイ
+### 1.17 Cloudflare静的Assetsデプロイ
 
-- Cloudflareへの配備方式は静的exportではなく `@opennextjs/cloudflare` によるWorkers配備とする。`next.config.ts`へ `output: "export"` を追加せず、`out` ディレクトリも使用しない。
-- `open-next.config.ts` はOpenNextのCloudflare設定を定義する必須ファイル。現状は外部incremental cacheを有効化せず、標準のCloudflare構成を使用する。
-- `wrangler.toml` のWorker名は `pomo-tm`、Worker entry pointは `.open-next/worker.js`、静的assetsは `.open-next/assets`、binding名は `ASSETS` とする。
-- `WORKER_SELF_REFERENCE` のservice名はWorker名と同じ `pomo-tm` に固定する。旧名 `tomato-focus` や別Worker名を参照させない。
-- D1 binding `pomo_db`、database name `pomo-db`、既存database IDは維持する。デプロイ設定修正のためにDBを作り直さない。
-- `npm run build` は通常のNext.js buildを行う。Cloudflare成果物の生成だけを確認するときは `npm run build:cloudflare`、ローカルpreviewは `npm run preview`、本番deployは `npm run deploy` を使用する。
-- `npm run deploy` は `opennextjs-cloudflare build` 成功後にだけ `opennextjs-cloudflare deploy` を実行するため、`.open-next/worker.js` と `.open-next/assets` が存在しない状態でWranglerを直接deployしない。
+- Cloudflareへの本番配備方式はNext.js static exportとし、`next.config.ts`の `output: "export"` により `npm run build` がルートの `out` ディレクトリを生成する。
+- 正規のCloudflare設定はルートの `wrangler.json`。Worker名は `pomo-tm`、compatibility dateは `2026-09-21`、assets directoryは `./out` とする。静的assets-only配備のためWorker scriptの `main` は指定しない。
+- Metadata Routeの `/manifest.webmanifest` は `src/app/manifest.ts` の `dynamic = "force-static"` により静的export対象とする。
+- `npm run deploy` は先に `npm run build`を完了し、その後 `wrangler deploy --config wrangler.json` を実行する。Wranglerを直接実行する場合も `wrangler.json` を明示し、旧OpenNext設定を参照させない。
+- 現在のクライアントアプリは静的export可能な構成を維持する。Server Actions、リクエスト依存の動的Route Handler、SSR必須APIを追加する場合は、静的配備との互換性を事前に再評価する。
 
 ## 2. UI / レイアウト仕様（崩してはいけない要素）
 
@@ -520,10 +518,9 @@
 | `src/types/db.ts` | D1のusers/accounts/sessions/rankings/user_items/subscriptions行型、書込型、プレミアム判定ヘルパー |
 | `schema.sql` | Cloudflare D1の正規スキーマ、外部キー・一意制約・CHECK制約・検索インデックス |
 | `.env.example` | Firebase Web Appの `NEXT_PUBLIC_FIREBASE_*` 環境変数例。実プロジェクト値は環境ごとに設定する |
-| `next.config.ts` | 開発オリジン許可、`next dev`でCloudflare bindingを使うOpenNext初期化 |
-| `open-next.config.ts` | OpenNext Cloudflare Worker buildの必須設定。標準構成を定義 |
-| `wrangler.toml` | `pomo-tm` Worker entry point、assets、self-reference service、D1 binding |
-| `package.json` | Next.js通常buildとOpenNext build／preview／deploy／uploadの実行順序 |
+| `next.config.ts` | 開発オリジン許可、`output: "export"` による静的 `out` 生成 |
+| `wrangler.json` | `pomo-tm` の静的Assets設定。配信元は `./out` |
+| `package.json` | Next.js static build後に `wrangler.json` を明示してdeployする実行順序 |
 
 ### 4.3 コンポーネント間のデータフロー
 
@@ -596,8 +593,8 @@ page.tsx
 
 - `npx tsc --noEmit` が成功すること。
 - `npm run build` で `/`、`/privacy` が生成されること。
-- `npm run build:cloudflare` で `.open-next/worker.js` と `.open-next/assets` が生成され、Wranglerがentry point／assets missingを報告しないこと。
-- `wrangler.toml` の `name` と `WORKER_SELF_REFERENCE.service` がともに `pomo-tm` であること。
+- `npm run build` で `out` が生成され、`out/index.html`、`out/privacy.html`、`out/manifest.webmanifest` が存在すること。
+- `npx wrangler deploy --dry-run --config wrangler.json` が `./out` のassetsを読み込み、entry-pointまたはassets directory missingを報告しないこと。
 - Focus/Break/Pause/Reset/Spaceキー、Reward分岐、Bonus Break終了リセットを確認すること。
 - Matter.jsがタイマー停止中とページ非表示中にも更新されること。
 - 320px程度の狭い画面でツールバーが親幅を押し広げず、横スワイプでき、スクロールバーが見えないこと。
