@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CONFIG, type TimerMode } from "@/lib/config";
 
-export function useTimer(onTomato: () => void, onSessionComplete?: () => void, isDebugMode = false) {
+type SessionCompleteHandler = (completedMode: TimerMode, shouldAutoContinue: boolean) => void;
+
+export function useTimer(
+  onTomato: () => void,
+  onSessionComplete?: SessionCompleteHandler,
+  isDebugMode = false,
+  canUseAutoSwitch = true,
+) {
   const [mode, setMode] = useState<TimerMode>("focus");
   const [remaining, setRemaining] = useState(CONFIG.durations.focus);
   const [running, setRunning] = useState(false);
@@ -12,10 +19,16 @@ export function useTimer(onTomato: () => void, onSessionComplete?: () => void, i
   const deadline = useRef(0), timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const focusDrop = useRef<ReturnType<typeof setTimeout> | null>(null), debugDrop = useRef<ReturnType<typeof setInterval> | null>(null);
   const modeRef = useRef<TimerMode>(mode), runningRef = useRef(false), debugRef = useRef(false);
-  const autoLoopRef = useRef(false), tomatoRef = useRef(onTomato);
+  const autoLoopRef = useRef(false), canUseAutoSwitchRef = useRef(canUseAutoSwitch), tomatoRef = useRef(onTomato);
   const sessionCompleteRef = useRef(onSessionComplete);
   useEffect(() => { tomatoRef.current = onTomato; }, [onTomato]);
   useEffect(() => { sessionCompleteRef.current = onSessionComplete; }, [onSessionComplete]);
+  useEffect(() => {
+    canUseAutoSwitchRef.current = canUseAutoSwitch;
+    if (canUseAutoSwitch) return;
+    autoLoopRef.current = false;
+    setAutoLoopEnabled(false);
+  }, [canUseAutoSwitch]);
 
   const stopDrops = useCallback(() => {
     if (focusDrop.current) clearTimeout(focusDrop.current);
@@ -45,8 +58,9 @@ export function useTimer(onTomato: () => void, onSessionComplete?: () => void, i
       setRemaining(next);
       if (!next) {
         const completed = modeRef.current;
+        const shouldAutoContinue = autoLoopRef.current && canUseAutoSwitchRef.current;
         stopDrops();
-        sessionCompleteRef.current?.();
+        sessionCompleteRef.current?.(completed, shouldAutoContinue);
         if (completed === "focus") {
           tomatoRef.current();
           modeRef.current = "break"; setMode("break"); setRemaining(CONFIG.durations.break);
@@ -54,8 +68,17 @@ export function useTimer(onTomato: () => void, onSessionComplete?: () => void, i
           runningRef.current = true; setRunning(true);
         } else {
           modeRef.current = "focus"; setMode("focus"); setRemaining(CONFIG.durations.focus);
-          runningRef.current = false; setRunning(false);
-          if (timer.current) clearInterval(timer.current); timer.current = null;
+          if (shouldAutoContinue) {
+            deadline.current = Date.now() + CONFIG.durations.focus * 1000;
+            runningRef.current = true; setRunning(true);
+            scheduleFocus();
+            if (isDebugMode && debugRef.current) {
+              debugDrop.current = setInterval(() => tomatoRef.current(), CONFIG.debugDropInterval);
+            }
+          } else {
+            runningRef.current = false; setRunning(false);
+            if (timer.current) clearInterval(timer.current); timer.current = null;
+          }
         }
       }
     }, 250);
@@ -82,6 +105,7 @@ export function useTimer(onTomato: () => void, onSessionComplete?: () => void, i
     if (enabled && runningRef.current && modeRef.current === "focus") debugDrop.current = setInterval(() => tomatoRef.current(), CONFIG.debugDropInterval);
   }, [isDebugMode]);
   const toggleAutoLoop = useCallback(() => {
+    if (!canUseAutoSwitchRef.current) return;
     autoLoopRef.current = !autoLoopRef.current;
     setAutoLoopEnabled(autoLoopRef.current);
   }, []);

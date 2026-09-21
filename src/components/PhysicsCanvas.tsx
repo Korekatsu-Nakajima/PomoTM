@@ -87,6 +87,11 @@ type CatEvent = CatCargo & {
   escaping: boolean;
 };
 
+const ALIEN_LOOP_AUDIO_PATH = "/audio/ailian.mp3";
+const GIANT_TOMATO_LANDING_AUDIO_PATH = "/audio/giant_tomato_sound.mp3";
+const TOMATO_LANDING_AUDIO_PATH = "/audio/tomato_sound.mp3";
+const LANDING_AUDIO_POOL_SIZE = 3;
+
 export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>(function PhysicsCanvas(
   {
     counts,
@@ -198,6 +203,65 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       || catEvents.some((cat) => cat.state === "falling");
     let octopusEvent: OctopusEvent | null = null;
     const alienEvents: AlienEvent[] = [];
+    const createAudioPool = (source: string, volume: number) => Array.from(
+      { length: LANDING_AUDIO_POOL_SIZE },
+      () => {
+        const audio = new Audio(source);
+        audio.preload = "auto";
+        audio.volume = volume;
+        return audio;
+      },
+    );
+    const tomatoLandingAudioPool = createAudioPool(TOMATO_LANDING_AUDIO_PATH, 0.2);
+    const giantLandingAudioPool = createAudioPool(GIANT_TOMATO_LANDING_AUDIO_PATH, 0.3);
+    const alienLoopAudio = new Audio(ALIEN_LOOP_AUDIO_PATH);
+    alienLoopAudio.preload = "auto";
+    alienLoopAudio.loop = true;
+    alienLoopAudio.volume = 0.18;
+    let audioUnlocked = false;
+    let alienLoopRequested = false;
+    let alienLoopPlayPending = false;
+    let alienLoopPlaybackBlocked = false;
+    let tomatoLandingAudioIndex = 0;
+    let giantLandingAudioIndex = 0;
+    let lastTomatoLandingSoundAt = Number.NEGATIVE_INFINITY;
+    let lastGiantLandingSoundAt = Number.NEGATIVE_INFINITY;
+    const stopAndResetAudio = (audio: HTMLAudioElement) => {
+      audio.pause();
+      try {
+        audio.currentTime = 0;
+      } catch {
+        // The media may not have loaded enough metadata to seek yet.
+      }
+    };
+    const syncAlienLoopAudio = (shouldPlay: boolean) => {
+      if (!shouldPlay) {
+        if (alienLoopRequested || !alienLoopAudio.paused || alienLoopAudio.currentTime > 0) {
+          stopAndResetAudio(alienLoopAudio);
+        }
+        alienLoopRequested = false;
+        alienLoopPlayPending = false;
+        alienLoopPlaybackBlocked = false;
+        return;
+      }
+      if (!alienLoopRequested) alienLoopPlaybackBlocked = false;
+      alienLoopRequested = true;
+      if (!audioUnlocked
+        || !alienLoopAudio.paused
+        || alienLoopPlayPending
+        || alienLoopPlaybackBlocked) return;
+      alienLoopPlayPending = true;
+      alienLoopAudio.play()
+        .catch(() => { alienLoopPlaybackBlocked = true; })
+        .finally(() => { alienLoopPlayPending = false; });
+    };
+    const unlockAudio = () => {
+      audioUnlocked = true;
+      alienLoopPlaybackBlocked = false;
+      if (alienLoopRequested) syncAlienLoopAudio(true);
+    };
+    window.addEventListener("pointerdown", unlockAudio, { capture: true, passive: true });
+    window.addEventListener("keydown", unlockAudio, true);
     const deferredDeliveries: boolean[] = [];
     const juiceParticles: JuiceParticle[] = [];
     const contrailParticles: ContrailParticle[] = [];
@@ -519,6 +583,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
             burstAt: 0,
             baseRestitution: restitution,
             baseFriction: friction,
+            hasPlayedLandSound: settled,
           },
         },
       });
@@ -874,6 +939,44 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       if (bodyB.isSleeping) Matter.Sleeping.set(bodyB, false);
     };
 
+    const playLandingSound = (body: Matter.Body, other: Matter.Body) => {
+      if (body.label !== "tomato") return;
+      const tomato = body.plugin.tomato as TomatoBodyData & { hasPlayedLandSound?: boolean };
+      if (!tomato || tomato.hasPlayedLandSound) return;
+      const landedOnTomato = other.label === "tomato" && body.position.y < other.position.y;
+      const landedOnGround = other === floor
+        || other === cloudFloorBody
+        || other.parent === cloudFloorBody
+        || other === terrainBody
+        || other.parent === terrainBody
+        || other.label.startsWith("cloud-floor")
+        || other.label.startsWith("archived-terrain");
+      if (!landedOnTomato && !landedOnGround) return;
+      tomato.hasPlayedLandSound = true;
+      if (!audioUnlocked) return;
+
+      const isGiant = tomato.radius / 22.5 >= 2;
+      const now = performance.now();
+      const lastPlayedAt = isGiant ? lastGiantLandingSoundAt : lastTomatoLandingSoundAt;
+      const cooldown = isGiant ? 110 : 70;
+      if (now - lastPlayedAt < cooldown) return;
+      if (isGiant) lastGiantLandingSoundAt = now;
+      else lastTomatoLandingSoundAt = now;
+
+      const pool = isGiant ? giantLandingAudioPool : tomatoLandingAudioPool;
+      const poolIndex = isGiant ? giantLandingAudioIndex : tomatoLandingAudioIndex;
+      const audio = pool[poolIndex % pool.length];
+      if (isGiant) giantLandingAudioIndex = (poolIndex + 1) % pool.length;
+      else tomatoLandingAudioIndex = (poolIndex + 1) % pool.length;
+      if (!audio.paused && !audio.ended) return;
+      try {
+        audio.currentTime = 0;
+      } catch {
+        // The media may not have loaded enough metadata to seek yet.
+      }
+      audio.play().catch(() => {});
+    };
+
     const evaluateCollisionStart = (event: Matter.IEventCollision<Matter.Engine>) => {
       lastPhysicsPhase = "collisionStart";
       for (const pair of event.pairs) {
@@ -883,6 +986,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
           pair.bodyA.velocity.y - pair.bodyB.velocity.y,
         );
         const relativeSpeed = Number.isFinite(calculatedRelativeSpeed) ? calculatedRelativeSpeed : 0;
+        playLandingSound(pair.bodyA, pair.bodyB);
+        playLandingSound(pair.bodyB, pair.bodyA);
         wakeSleepingTomatoesOnImpact(pair.bodyA, pair.bodyB, relativeSpeed);
         if (relativeSpeed >= 6) {
           if (pair.bodyA.label === "tomato") {
@@ -2029,6 +2134,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       const ufoNow = ufoEventTime;
       Engine.update(engine, safeDelta);
       if (pageHidden) {
+        syncAlienLoopAudio(false);
         frame = requestAnimationFrame(render);
         return;
       }
@@ -2870,6 +2976,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         drawAlien(x, y, 96 / currentScale.current, alien.direction);
         if (progress >= 1) alienEvents.splice(index, 1);
       }
+      syncAlienLoopAudio(ufoEvents.length > 0 || alienEvents.length > 0);
       context.restore();
       drawPhysicsDiagnosticOverlay();
       frame = requestAnimationFrame(render);
@@ -2886,6 +2993,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       observer.disconnect();
       cancelAnimationFrame(frame);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pointerdown", unlockAudio, true);
+      window.removeEventListener("keydown", unlockAudio, true);
+      stopAndResetAudio(alienLoopAudio);
+      [...tomatoLandingAudioPool, ...giantLandingAudioPool].forEach(stopAndResetAudio);
       Matter.Events.off(engine, "collisionStart", handleStrongImpact);
       Matter.Events.off(engine, "collisionActive", handleActiveSleepingContact);
       Matter.Events.off(engine, "beforeUpdate", handleBeforeUpdate);

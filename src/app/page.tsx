@@ -26,6 +26,7 @@ import {
 const button = "inline-flex shrink-0 items-center justify-center gap-1 rounded-full px-2.5 py-2 text-xs font-bold transition hover:-translate-y-0.5 disabled:cursor-default disabled:opacity-40 disabled:hover:translate-y-0 sm:gap-1.5 sm:px-3 sm:text-sm";
 const quiet = `${button} bg-zinc-800 text-zinc-100 ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700`;
 const INITIAL_ITEM_COUNTS: ItemCounts = { doubleDrop: 0, balloonBoost: 0, goldBoost: 0 };
+const DEFAULT_PREMIUM_ACCESS = true;
 
 export default function Home() {
   const isDebugMode = useDebugMode();
@@ -49,10 +50,12 @@ export default function Home() {
   const [rewardWatching, setRewardWatching] = useState(false);
   const [rewardSeconds, setRewardSeconds] = useState(5);
   const [itemRewardOpen, setItemRewardOpen] = useState(false);
-  const [itemRewardRevealed, setItemRewardRevealed] = useState(false);
   const [pendingItemReward, setPendingItemReward] = useState<BuffKey | null>(null);
   const [isBonusBreakMode, setIsBonusBreakMode] = useState(false);
+  const isPremium = DEFAULT_PREMIUM_ACCESS;
+  const canUseAutoSwitch = isPremium;
   const timerModeRef = useRef<TimerMode>("focus");
+  const timerStartRef = useRef<() => void>(() => undefined);
   const pendingItemRewardRef = useRef<BuffKey | null>(null);
   const itemRewardGrantedRef = useRef(false);
   const t = translations[language];
@@ -168,15 +171,15 @@ export default function Home() {
         ? "balloonBoost"
         : "goldBoost";
   }, []);
-  const openPendingItemReward = useCallback((bonusBreak: boolean) => {
+  const openPendingItemReward = useCallback((bonusBreak: boolean, resumeTimer = true) => {
     const reward = pendingItemRewardRef.current;
     setRewardWatching(false);
     setRewardOpen(false);
     setRewardSeconds(5);
     setIsBonusBreakMode(bonusBreak);
-    setItemRewardRevealed(false);
     if (!reward) {
       setItemRewardOpen(false);
+      if (resumeTimer) timerStartRef.current();
       return;
     }
     if (!itemRewardGrantedRef.current) {
@@ -184,9 +187,16 @@ export default function Home() {
       setItemCounts((current) => ({ ...current, [reward]: current[reward] + 1 }));
     }
     setItemRewardOpen(true);
+    if (resumeTimer) timerStartRef.current();
   }, []);
-  const handleSessionComplete = useCallback(() => {
-    if (timerModeRef.current === "break") {
+  const dismissItemReward = useCallback(() => {
+    setItemRewardOpen(false);
+    setPendingItemReward(null);
+    pendingItemRewardRef.current = null;
+    itemRewardGrantedRef.current = false;
+  }, []);
+  const handleSessionComplete = useCallback((completedMode: TimerMode, shouldAutoContinue: boolean) => {
+    if (completedMode === "break") {
       clearBonusBreakState();
       return;
     }
@@ -195,11 +205,15 @@ export default function Home() {
     itemRewardGrantedRef.current = false;
     setPendingItemReward(reward);
     setItemRewardOpen(false);
-    setItemRewardRevealed(false);
     clearBonusBreakState();
-    setRewardOpen(true);
-  }, [clearBonusBreakState, drawRandomItem]);
-  const timer = useTimer(awardTomato, handleSessionComplete, isDebugMode);
+    if (shouldAutoContinue) {
+      openPendingItemReward(false, false);
+    } else {
+      setRewardOpen(true);
+    }
+  }, [clearBonusBreakState, drawRandomItem, openPendingItemReward]);
+  const timer = useTimer(awardTomato, handleSessionComplete, isDebugMode, canUseAutoSwitch);
+  timerStartRef.current = timer.start;
   const pauseTomatoCycle = useCallback(() => {
     timer.pause();
   }, [timer.pause]);
@@ -208,7 +222,7 @@ export default function Home() {
   }, [timer.start]);
   useEffect(() => {
     const handleSpaceToggle = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || event.repeat || rewardOpen || rewardWatching || itemRewardOpen) return;
+      if (event.code !== "Space" || event.repeat || rewardOpen || rewardWatching) return;
       const target = event.target;
       if (target instanceof HTMLElement
         && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName))) return;
@@ -218,12 +232,19 @@ export default function Home() {
     };
     window.addEventListener("keydown", handleSpaceToggle);
     return () => window.removeEventListener("keydown", handleSpaceToggle);
-  }, [itemRewardOpen, pauseTomatoCycle, resumeTomatoCycle, rewardOpen, rewardWatching, timer.running]);
+  }, [pauseTomatoCycle, resumeTomatoCycle, rewardOpen, rewardWatching, timer.running]);
+  const confirmBreakReset = () => timer.mode !== "break" || window.confirm(
+    language === "ja"
+      ? "現在の休憩時間（ボーナス）がリセットされますが、よろしいですか？"
+      : "Your current break time (including any bonus) will be reset. Continue?",
+  );
   const selectTimerMode = (mode: TimerMode) => {
+    if (timer.mode === "break" && mode === "focus" && !confirmBreakReset()) return;
     clearBonusBreakState();
     timer.selectMode(mode);
   };
   const resetTimer = () => {
+    if (!confirmBreakReset()) return;
     clearBonusBreakState();
     timer.reset();
   };
@@ -353,7 +374,7 @@ export default function Home() {
               <button className={`${button} ${isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} aria-label={t.header.start} title={t.header.start} disabled={timer.running} onClick={resumeTomatoCycle}><Play size={18} fill="currentColor" /></button>
               <button className={quietClass} aria-label={t.header.pause} title={t.header.pause} disabled={!timer.running} onClick={pauseTomatoCycle}><Pause size={18} /></button>
               <button className={quietClass} aria-label={t.header.reset} title={t.header.reset} onClick={resetTimer}><RotateCcw size={18} /></button>
-              <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.autoLoopEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`${t.header.autoSwitch} ${timer.autoLoopEnabled ? t.header.on : t.header.off}`} title={t.header.autoSwitch} aria-pressed={timer.autoLoopEnabled} onClick={timer.toggleAutoLoop}><Repeat size={18} /></button>
+              <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.autoLoopEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`${t.header.autoSwitch} ${timer.autoLoopEnabled ? t.header.on : t.header.off}`} title={t.header.autoSwitch} aria-pressed={timer.autoLoopEnabled} disabled={!canUseAutoSwitch} onClick={timer.toggleAutoLoop}><Repeat size={18} /></button>
               {isDebugMode && (
                 <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.debugEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`${t.header.debug} ${timer.debugEnabled ? t.header.on : t.header.off}`} title={t.header.debug} aria-pressed={timer.debugEnabled} onClick={timer.toggleDebug}><Zap size={18} fill={timer.debugEnabled ? "currentColor" : "none"} /></button>
               )}
@@ -445,19 +466,10 @@ export default function Home() {
             rewardSeconds={rewardSeconds}
             itemRewardOpen={itemRewardOpen}
             itemReward={pendingItemReward}
-            itemRewardRevealed={itemRewardRevealed}
             isBreak={isBreak}
             onStartVideo={() => { setRewardSeconds(5); setRewardWatching(true); }}
             onSkipVideo={() => openPendingItemReward(false)}
-            onRevealItem={() => setItemRewardRevealed(true)}
-            onAcceptItem={() => {
-              setItemRewardOpen(false);
-              setItemRewardRevealed(false);
-              setPendingItemReward(null);
-              pendingItemRewardRef.current = null;
-              itemRewardGrantedRef.current = false;
-              timer.start();
-            }}
+            onItemRewardDismiss={dismissItemReward}
           />
         </section>
         <AdContainer

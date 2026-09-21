@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { CopyPlus, Gift, Play, Rocket, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { BuffKey } from "@/types/game";
@@ -10,12 +11,10 @@ type RewardModalProps = {
   rewardSeconds: number;
   itemRewardOpen: boolean;
   itemReward: BuffKey | null;
-  itemRewardRevealed: boolean;
   isBreak: boolean;
   onStartVideo: () => void;
   onSkipVideo: () => void;
-  onRevealItem: () => void;
-  onAcceptItem: () => void;
+  onItemRewardDismiss: () => void;
 };
 
 type ItemRewardDetail = {
@@ -54,13 +53,31 @@ export function RewardModal({
   rewardSeconds,
   itemRewardOpen,
   itemReward,
-  itemRewardRevealed,
   isBreak,
   onStartVideo,
   onSkipVideo,
-  onRevealItem,
-  onAcceptItem,
+  onItemRewardDismiss,
 }: RewardModalProps) {
+  const [itemToastVisible, setItemToastVisible] = useState(false);
+
+  useEffect(() => {
+    if (!itemRewardOpen || !itemReward) {
+      setItemToastVisible(false);
+      return;
+    }
+
+    setItemToastVisible(false);
+    const enterFrame = window.requestAnimationFrame(() => setItemToastVisible(true));
+    const fadeTimer = window.setTimeout(() => setItemToastVisible(false), 1_500);
+    const dismissTimer = window.setTimeout(onItemRewardDismiss, 2_000);
+
+    return () => {
+      window.cancelAnimationFrame(enterFrame);
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(dismissTimer);
+    };
+  }, [itemReward, itemRewardOpen, onItemRewardDismiss]);
+
   if (rewardOpen) {
     return (
       <div className={`absolute inset-0 z-[60] grid place-items-center p-4 backdrop-blur-md ${isBreak ? "bg-neutral-200/85" : "bg-neutral-950/85"}`}>
@@ -68,7 +85,7 @@ export function RewardModal({
           <Gift className="mx-auto mb-3 text-amber-400" size={40} />
           <h2 id="reward-title" className="text-xl font-black">お疲れ様でした！</h2>
           <p className={`mt-3 text-sm leading-relaxed ${isBreak ? "text-neutral-600" : "text-neutral-300"}`}>
-            動画を見て休憩ボーナストマトモードを発動（5分間）
+            動画を見て、ボーナストマトモードを発動しますか？
           </p>
           {rewardWatching ? (
             <div className="mt-6 rounded-2xl border border-amber-400/40 bg-black/80 p-8 text-white">
@@ -97,27 +114,17 @@ export function RewardModal({
   const RewardIcon = reward.Icon;
 
   return (
-    <div className={`absolute inset-0 z-[60] grid place-items-center p-4 backdrop-blur-md ${isBreak ? "bg-neutral-200/85" : "bg-neutral-950/85"}`}>
-      <section className={`w-full max-w-md rounded-3xl border p-6 text-center shadow-2xl ${isBreak ? "border-emerald-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900 text-white"}`} role="dialog" aria-modal="true" aria-labelledby="item-reward-title">
-        {itemRewardRevealed ? (
-          <>
-            <p className={`text-xs font-black tracking-[0.24em] ${isBreak ? "text-neutral-500" : "text-neutral-400"}`}>ITEM GET!</p>
-            <div className={`mx-auto mt-4 grid size-24 place-items-center rounded-3xl border shadow-xl ${isBreak ? "border-neutral-200 bg-neutral-100" : "border-neutral-700 bg-neutral-950"}`}>
-              <RewardIcon className={reward.iconClassName} size={52} strokeWidth={1.8} />
-            </div>
-            <h2 id="item-reward-title" className="mt-5 text-2xl font-black">{reward.name}</h2>
-            <p className={`mt-3 text-sm leading-relaxed ${isBreak ? "text-neutral-600" : "text-neutral-300"}`}>{reward.description}</p>
-            <button className={`${button} mt-6 w-full bg-amber-400 text-neutral-950`} onClick={onAcceptItem}>
-              受け取る
-            </button>
-          </>
-        ) : (
-          <button className="group w-full cursor-pointer rounded-3xl p-4 outline-none transition hover:scale-[1.03] active:scale-95" aria-label="宝箱を開ける" onClick={onRevealItem}>
-            <Gift className="mx-auto animate-[pulse_1.6s_ease-in-out_infinite] text-amber-400 drop-shadow-[0_0_24px_rgba(251,191,36,0.45)] transition group-hover:rotate-3 group-hover:scale-110" size={92} strokeWidth={1.6} />
-            <h2 id="item-reward-title" className="mt-5 text-2xl font-black">アイテムをゲット！</h2>
-            <span className={`mt-3 block animate-pulse text-sm font-black tracking-[0.25em] ${isBreak ? "text-neutral-600" : "text-white/70"}`}>Touch!</span>
-          </button>
-        )}
+    <div className="pointer-events-none absolute inset-x-0 top-20 z-[60] flex justify-center px-4 sm:top-24" aria-live="polite">
+      <section
+        className={`w-full max-w-sm rounded-3xl border p-5 text-center shadow-[0_18px_70px_rgba(251,191,36,0.3)] transition-all duration-500 ease-out ${itemToastVisible ? "scale-100 opacity-100" : "scale-75 opacity-0"} ${isBreak ? "border-amber-300/80 bg-white/95 text-neutral-950" : "border-amber-400/50 bg-neutral-900/95 text-white"}`}
+        role="status"
+      >
+        <p className={`text-xs font-black tracking-[0.24em] ${isBreak ? "text-amber-700" : "text-amber-300"}`}>ITEM GET!</p>
+        <div className={`mx-auto mt-3 grid size-16 place-items-center rounded-2xl border shadow-[0_0_28px_rgba(251,191,36,0.35)] ${isBreak ? "border-amber-200 bg-amber-50" : "border-amber-400/30 bg-neutral-950"}`}>
+          <RewardIcon className={reward.iconClassName} size={38} strokeWidth={1.8} />
+        </div>
+        <h2 className="mt-3 text-xl font-black">{reward.name}</h2>
+        <p className={`mt-2 text-sm leading-relaxed ${isBreak ? "text-neutral-600" : "text-neutral-300"}`}>{reward.description}</p>
       </section>
     </div>
   );
