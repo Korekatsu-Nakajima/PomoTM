@@ -2,6 +2,13 @@ name = "pomo-tm"
 main = ".open-next/worker.js"
 compatibility_date = "2026-09-21"
 compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+workers_dev = true
+
+
+routes = [
+  { pattern = "pomotm.com", custom_domain = true, zone_name = "pomotm.com" },
+  { pattern = "www.pomotm.com", custom_domain = true, zone_name = "pomotm.com" }
+]
 
 [assets]
 directory = ".open-next/assets"
@@ -15,3 +22,5 @@ service = "pomo-tm"
 binding = "pomo_db"
 database_name = "pomo-db"
 database_id = "6a87c217-8355-48d8-972e-32410952df34"
+
+
