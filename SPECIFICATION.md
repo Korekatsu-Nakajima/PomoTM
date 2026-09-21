@@ -269,9 +269,9 @@
 ### 1.14 PWA・インストール誘導
 
 - `/manifest.webmanifest` はMetadata Routeの `src/app/manifest.ts` から生成する。アプリ名は「PomoTM - トマトポモドーロタイマー」、表示モードは `standalone`、背景色とテーマ色は `#0f172a`。
-- 公式アイコンの原本は `assets/icon/180icon.png`、`assets/icon/192icon.png`、`assets/icon/512icon.png`。配信用コピーは同名で `public/icons/` に置く。
-- ManifestはPNGの192px／512pxアイコンを `/icons/192icon.png` と `/icons/512icon.png` から参照する。Root Layoutの通常アイコンも同じ192px／512pxを使用し、Apple Touch Iconには `/icons/180icon.png` を使用する。
-- 旧 `pomotm-192.svg` / `pomotm-512.svg` とその参照は保持しない。アイコン差替え時は原本・配信用コピー・Metadata・Manifestを同時に更新する。
+- 公式アイコンの原本は `assets/icon/180TMicon.png`、`assets/icon/192TMicon.png`、`assets/icon/512TMicon.png`。配信用コピーは同名で `public/icons/` に置く。
+- ManifestはPNGの192px／512pxアイコンを `/icons/192TMicon.png` と `/icons/512TMicon.png` から参照する。Root Layoutの通常アイコンも同じ192px／512pxを使用し、Apple Touch Iconには `/icons/180TMicon.png` を使用する。
+- 旧アイコンファイルとその参照は保持しない。アイコン差替え時は原本・配信用コピー・Metadata・Manifestを同時に更新する。
 - Root LayoutはViewport Metadataで `themeColor: #0f172a` と `viewportFit: cover` を設定し、Apple Web Appのcapable、black-translucent status bar、タイトルを設定する。
 - `PWAInstallPrompt` は `beforeinstallprompt` が発火し、スタンドアロン起動ではなく、7日間の非表示期間中でもない場合だけ表示する。インストール操作では保存したイベントの `prompt()` を呼び、`appinstalled` 後は閉じる。
 - 「後で」または閉じる操作はlocalStorageの `pomotm:pwa-install-dismissed-until` に7日後の期限を保存する。localStorageが使用不能でもクラッシュさせない。
