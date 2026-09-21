@@ -180,7 +180,9 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     let cloudFloorParts: Matter.Body[] = [];
     let cloudFloorEnabled = false;
     let cloudFloorCleanupY = Number.POSITIVE_INFINITY;
-    let wallHeight = 1, floorWidth = 1;
+    let wallHeight = 1, floorWidth = 1, floorDepth = 1;
+    const boundaryHorizontalMargin = 500;
+    const boundaryBottomMargin = 300;
     const activeBodies = new Set<Matter.Body>();
     const sleepingBodies = new Set<Matter.Body>();
     const pendingSleeping = new Set<Matter.Body>();
@@ -311,35 +313,52 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     };
 
     const syncBoundaries = (bounds: CameraBounds) => {
-      const nextWallHeight = height - bounds.top + 80;
-      const nextFloorWidth = bounds.right - bounds.left + 80;
+      const scale = Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
+      const horizontalMargin = boundaryHorizontalMargin / scale;
+      const bottomMargin = boundaryBottomMargin / scale;
+      const topMargin = 80 / scale;
+      const wallTop = bounds.top - topMargin;
+      const wallBottom = height + bottomMargin;
+      const nextWallHeight = wallBottom - wallTop;
+      const nextFloorWidth = bounds.right - bounds.left + horizontalMargin * 2;
+      const nextFloorDepth = bottomMargin;
       if (Math.abs(nextWallHeight - wallHeight) > 0.01) {
         Body.scale(leftWall, 1, nextWallHeight / wallHeight);
         Body.scale(rightWall, 1, nextWallHeight / wallHeight);
         wallHeight = nextWallHeight;
       }
-      if (Math.abs(nextFloorWidth - floorWidth) > 0.01) {
-        Body.scale(floor, nextFloorWidth / floorWidth, 1);
+      if (Math.abs(nextFloorWidth - floorWidth) > 0.01 || Math.abs(nextFloorDepth - floorDepth) > 0.01) {
+        Body.scale(floor, nextFloorWidth / floorWidth, nextFloorDepth / floorDepth);
         floorWidth = nextFloorWidth;
+        floorDepth = nextFloorDepth;
       }
-      const wallY = (bounds.top + height) / 2;
+      const wallY = (wallTop + wallBottom) / 2;
       const floorX = (bounds.left + bounds.right) / 2;
-      if (Math.abs(leftWall.position.x - (bounds.left - 20)) > 0.01 || Math.abs(leftWall.position.y - wallY) > 0.01) {
-        Body.setPosition(leftWall, { x: bounds.left - 20, y: wallY });
-        Body.setPosition(rightWall, { x: bounds.right + 20, y: wallY });
+      const leftWallX = bounds.left - horizontalMargin - 20;
+      const rightWallX = bounds.right + horizontalMargin + 20;
+      if (Math.abs(leftWall.position.x - leftWallX) > 0.01 || Math.abs(leftWall.position.y - wallY) > 0.01) {
+        Body.setPosition(leftWall, { x: leftWallX, y: wallY });
+        Body.setPosition(rightWall, { x: rightWallX, y: wallY });
       }
-      if (Math.abs(floor.position.x - floorX) > 0.01 || Math.abs(floor.position.y - (height + 20)) > 0.01) {
-        Body.setPosition(floor, { x: floorX, y: height + 20 });
+      const floorY = height + nextFloorDepth / 2;
+      if (Math.abs(floor.position.x - floorX) > 0.01 || Math.abs(floor.position.y - floorY) > 0.01) {
+        Body.setPosition(floor, { x: floorX, y: floorY });
       }
     };
 
     const createBoundaries = () => {
       const bounds = getBounds(currentScale.current);
-      wallHeight = bounds.bottom - bounds.top + 80;
-      floorWidth = bounds.right - bounds.left + 80;
-      leftWall = Bodies.rectangle(bounds.left - 20, (bounds.top + bounds.bottom) / 2, 40, wallHeight, { isStatic: true });
-      rightWall = Bodies.rectangle(bounds.right + 20, (bounds.top + bounds.bottom) / 2, 40, wallHeight, { isStatic: true });
-      floor = Bodies.rectangle((bounds.left + bounds.right) / 2, bounds.bottom + 20, floorWidth, 40, { isStatic: true });
+      const scale = Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
+      const horizontalMargin = boundaryHorizontalMargin / scale;
+      const bottomMargin = boundaryBottomMargin / scale;
+      const wallTop = bounds.top - 80 / scale;
+      const wallBottom = height + bottomMargin;
+      wallHeight = wallBottom - wallTop;
+      floorWidth = bounds.right - bounds.left + horizontalMargin * 2;
+      floorDepth = bottomMargin;
+      leftWall = Bodies.rectangle(bounds.left - horizontalMargin - 20, (wallTop + wallBottom) / 2, 40, wallHeight, { isStatic: true });
+      rightWall = Bodies.rectangle(bounds.right + horizontalMargin + 20, (wallTop + wallBottom) / 2, 40, wallHeight, { isStatic: true });
+      floor = Bodies.rectangle((bounds.left + bounds.right) / 2, height + floorDepth / 2, floorWidth, floorDepth, { isStatic: true });
       Composite.add(engine.world, [leftWall, rightWall, floor]);
       camera.current = bounds;
     };
@@ -347,13 +366,17 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     const createCloudFloor = (bounds: CameraBounds) => {
       if (cloudFloorBody) Composite.remove(engine.world, cloudFloorBody);
       const scale = Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
-      const visibleWidth = bounds.right - bounds.left;
+      const horizontalMargin = boundaryHorizontalMargin / scale;
+      const bottomMargin = boundaryBottomMargin / scale;
+      const expandedLeft = bounds.left - horizontalMargin;
+      const expandedRight = bounds.right + horizontalMargin;
+      const visibleWidth = expandedRight - expandedLeft;
       const cloudY = bounds.bottom - 50 / scale;
       const nominalRadius = 42 / scale;
       const overlapSpacing = nominalRadius * 1.42;
       const puffCount = Math.max(3, Math.ceil(visibleWidth / overlapSpacing) + 1);
       const coveredWidth = overlapSpacing * (puffCount - 1);
-      const startX = (bounds.left + bounds.right - coveredWidth) / 2;
+      const startX = (expandedLeft + expandedRight - coveredWidth) / 2;
       cloudFloorParts = Array.from({ length: puffCount }, (_, index) => {
         const radius = nominalRadius * (0.88 + (index % 3) * 0.06);
         const y = cloudY + (index % 2 === 0 ? 0 : nominalRadius * 0.08);
@@ -365,8 +388,22 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
           render: { visible: false },
         });
       });
+      const supportTop = cloudY + nominalRadius * 0.72;
+      const cloudFloorSupport = Bodies.rectangle(
+        (expandedLeft + expandedRight) / 2,
+        supportTop + bottomMargin / 2,
+        visibleWidth + nominalRadius * 2,
+        bottomMargin,
+        {
+          isStatic: true,
+          label: "cloud-floor-support",
+          friction: 0.72,
+          restitution: 0,
+          render: { visible: false },
+        },
+      );
       cloudFloorBody = Matter.Body.create({
-        parts: cloudFloorParts,
+        parts: [...cloudFloorParts, cloudFloorSupport],
         isStatic: true,
         label: "cloud-floor",
         friction: 0.72,
@@ -379,7 +416,35 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       Composite.add(engine.world, cloudFloorBody);
     };
 
+    const shiftTomatoesForGroundResize = (deltaY: number) => {
+      if (!Number.isFinite(deltaY) || Math.abs(deltaY) <= 0.01) return;
+      const tomatoes = new Set([
+        ...activeBodies,
+        ...sleepingBodies,
+        ...pendingSleeping,
+        ...staticCoreBodies,
+        ...lowerStaticBodies,
+      ]);
+      for (const body of tomatoes) {
+        if (body.label !== "tomato" || !body.plugin.tomato) continue;
+        const nextY = body.position.y + deltaY;
+        if (!Number.isFinite(body.position.x) || !Number.isFinite(nextY)) continue;
+        Body.setPosition(body, { x: body.position.x, y: nextY });
+      }
+      settledPileTop = sleepingBodies.size
+        ? Math.min(...[...sleepingBodies].map((body) => body.bounds.min.y))
+        : Number.POSITIVE_INFINITY;
+      sleepingCacheDirty = true;
+      forceCacheRefresh = true;
+    };
+
     const resize = () => {
+      const boundariesReady = Boolean(floor);
+      const oldGroundY = cloudFloorEnabled && cloudFloorParts.length > 0
+        ? Math.min(...cloudFloorParts.map((part) => part.bounds.min.y))
+        : boundariesReady
+          ? floor.bounds.min.y
+          : height;
       const rect = container.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       width = Math.max(1, rect.width); height = Math.max(1, rect.height);
@@ -393,8 +458,16 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       sleepingContext?.setTransform(dpr, 0, 0, dpr, 0, 0);
       sleepingCacheDirty = true;
       forceCacheRefresh = true;
-      if (leftWall) syncBoundaries(getBounds(currentScale.current));
-      if (cloudFloorEnabled && floor) createCloudFloor(getBounds(currentScale.current));
+      const nextBounds = getBounds(currentScale.current);
+      if (boundariesReady) {
+        const scale = Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
+        const newGroundY = cloudFloorEnabled
+          ? nextBounds.bottom - 92 / scale
+          : height;
+        shiftTomatoesForGroundResize(newGroundY - oldGroundY);
+      }
+      if (leftWall) syncBoundaries(nextBounds);
+      if (cloudFloorEnabled && floor) createCloudFloor(nextBounds);
       buildBackgroundCanvas();
     };
 
@@ -1532,7 +1605,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     };
 
     const rebuildTerrainBody = () => {
-      const terrainBottom = height + 40;
+      const terrainBottom = height + boundaryBottomMargin / Math.max(currentScale.current, MIN_DYNAMIC_CAMERA_SCALE);
       const parts = createTerrainSegmentParts({
         terrainTopByBin,
         terrainBottom,
@@ -1557,7 +1630,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       lastPhysicsPhase = "out of bounds check";
 
       if (!terrainInitialized) {
-        const terrainWidth = width / MIN_DYNAMIC_CAMERA_SCALE;
+        const terrainWidth = (width + boundaryHorizontalMargin * 2) / MIN_DYNAMIC_CAMERA_SCALE;
         terrainLeft = width / 2 - terrainWidth / 2;
         terrainBinWidth = terrainWidth / TERRAIN_SEGMENT_COUNT;
         terrainInitialized = true;

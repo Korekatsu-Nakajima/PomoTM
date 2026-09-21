@@ -25,6 +25,12 @@
 - パスエイリアスは `@/* -> ./src/*`。
 - 開発アクセス許可は `localhost:3000` と `192.168.56.1`。
 
+#### SEOメタデータ
+
+- Root LayoutのMetadataで、PomoTMを「トマトが積み上がるポモドーロタイマー」「勉強・作業用タイマー」として案内する。
+- 検索キーワードは「ポモドーロタイマー」「勉強タイマー」「30分タイマー」「作業用タイマー」「集中タイマー」「トマトタイマー」「ゲーミフィケーション」「Webタイマー」を設定する。
+- Open Graphは `website`、`ja_JP`、サイト名 `PomoTM`。Twitter Cardは `summary_large_image` とし、両方に日本語タイトルと説明文を設定する。
+
 ### 1.2 タイマー
 
 | 項目 | 現在値・挙動 |
@@ -144,6 +150,7 @@
 - 吸収時はトマトをアーカイブCanvasへ描き、96分割の高さ情報からCompound Terrainを再構築して、元BodyをWorldから削除する。
 - Body数の単純上限や最古Body削除は存在しない。
 - 個別トマト座標の保存・復元およびCanvas Bakingによる深層Body削除は存在しない。
+- 通常床と左右壁は可視領域より左右500px相当、下方向300px相当の予備領域を持つ。床上面はCanvas下端に維持し、床本体は下方向へ厚く拡張する。Terrainの下端と初期横幅にも同じ予備領域を含める。
 
 ### 1.9 カメラ、再開、背景
 
@@ -154,6 +161,8 @@
 - 最高標高が保存済みの再開時は、ズームを0.48へ固定し、保存カメラYまたは `initialMaxAltitude * 2` を復元する。
 - 再開時は個別トマトを復元せず、画面下部に重なり合う円形Static BodyのCloud Floorを1つのCompound Bodyとして生成し、トマト0個の物理Worldから再開する。
 - Cloud Floorは見た目と当たり判定を同じ円群から描画し、長方形の白線は描かない。左右から落ちて床下300px相当を越えたBodyを削除する。
+- Cloud Floorの表面は左右500px相当まで円群を延長し、描画しない下部支持Bodyを300px相当確保する。表示する雲グラフィックは従来どおり表面の円群のみとする。
+- ResizeObserverによるサイズ変更時は、変更前後の通常床またはCloud Floor上面のY差分を算出し、World内の全トマトBodyを `Body.setPosition(body, nextPosition)` で同じ差分だけ移動する。速度・Force・Sleep状態は変更せず、Sleeping描画キャッシュと積載上端だけを更新する。
 - カメラ状態は10秒ごと、一時停止時、beforeunload、アンマウント時に保存する。
 - 背景は標高に応じてダーク／休憩ライト配色を補間する。
 - 高度演出:
@@ -256,6 +265,15 @@
 - 保存値は有限数・非負整数・上限50,000などを検証し、不正な値は破棄または0へ戻す。
 - `counts` は親Stateと保存には使用され、`PhysicsCanvas` にPropsとして渡されるが、現在はBody復元には使用されていない。
 - `CONFIG.maxRestoredBodies = 80` は現在参照されていない。
+
+### 1.14 PWA・インストール誘導
+
+- `/manifest.webmanifest` はMetadata Routeの `src/app/manifest.ts` から生成する。アプリ名は「PomoTM - トマトポモドーロタイマー」、表示モードは `standalone`、背景色とテーマ色は `#0f172a`。
+- Manifestは192px／512pxのPomoTMトマトSVGアイコンを参照する。アイコン実体は `public/icons` に置き、Manifestから参照するパスを欠損させない。
+- Root LayoutはViewport Metadataで `themeColor: #0f172a` と `viewportFit: cover` を設定し、Apple Web Appのcapable、black-translucent status bar、タイトルを設定する。
+- `PWAInstallPrompt` は `beforeinstallprompt` が発火し、スタンドアロン起動ではなく、7日間の非表示期間中でもない場合だけ表示する。インストール操作では保存したイベントの `prompt()` を呼び、`appinstalled` 後は閉じる。
+- 「後で」または閉じる操作はlocalStorageの `pomotm:pwa-install-dismissed-until` に7日後の期限を保存する。localStorageが使用不能でもクラッシュさせない。
+- 誘導UIは画面下部の `z-[80]` に表示し、ゲーム・広告・モーダルのStateやMatter.js処理には依存しない。
 
 ## 2. UI / レイアウト仕様（崩してはいけない要素）
 
@@ -417,11 +435,13 @@
 
 | ファイル | 責務 |
 | --- | --- |
-| `src/app/layout.tsx` | Metadata、AdSenseスクリプト、全ページ共通HTML構造 |
+| `src/app/layout.tsx` | SEO Metadata、Open Graph、Twitter Card、AdSenseスクリプト、全ページ共通HTML構造 |
+| `src/app/manifest.ts` | PWA Manifest Metadata Route、standalone表示、テーマ色、アプリアイコン定義 |
 | `src/app/globals.css` | Tailwind読込、全画面overflow制御、button cursor、no-scrollbar |
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |
 | `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI |
 | `src/components/RewardModal.tsx` | 疑似リワード動画UI、開封前の宝箱タップ演出、開封後の獲得アイテム詳細UI |
+| `src/components/PWAInstallPrompt.tsx` | beforeinstallprompt保持、スタンドアロン判定、7日間の再表示抑制、インストール誘導UI |
 | `src/components/AdContainer.tsx` | Desktop/Mobile広告プレースホルダー、30秒refresh state |
 | `src/hooks/useGameStorage.ts` | localStorageの検証付き読込・保存、カメラ状態API |
 | `src/utils/canvasRenderer.ts` | Tomatoおよび全CarrierのCanvas描画、SVG Path2D、Satellite電波 |
