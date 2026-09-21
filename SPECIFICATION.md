@@ -370,13 +370,15 @@
 
 - Homeのゲームカードには利用規約・プライバシーポリシーへのリンクを表示しない。旧左下プライバシーポリシーリンクは削除済みとする。
 - UI上の法務導線はSettings Modal最下部の控えめなTerms / Privacyリンクへ一本化する。
-- AdSense・OAuth審査および直接参照用の公開 `/privacy` ページは維持するが、Home画面には重複リンクを戻さない。
+- AdSense・OAuth審査および外部からの直接参照用に、公開URL `/privacy` と `/terms` をそれぞれ独立した静的ページとして維持する。Home画面には重複リンクを戻さない。
+- OAuth同意画面にはホームページ `/`、プライバシーポリシー `/privacy`、利用規約 `/terms` を別々のURLとして登録する。
 
-### 2.7 プライバシーポリシーページ
+### 2.7 公開法務ページ
 
-- `/privacy` はServer Componentで、独自に `h-[100dvh] overflow-y-auto` を持つ。グローバルbodyのoverflow hidden下でも縦スクロール可能。
-- 最大幅3xlのレスポンシブカード。
-- Google AdSense / Cookie、Googleポリシー外部リンク、Vercel Analytics / Speed Insights、免責事項、トップへ戻るリンクを含む。
+- `/privacy` と `/terms` はServer Componentで、独自に `h-[100dvh] overflow-y-auto` を持つ。グローバルbodyのoverflow hidden下でも縦スクロール可能で、クライアントStateや認証状態に依存せず直接アクセスできる。
+- 両ページとも最大幅3xlのレスポンシブカードとトップへ戻るリンクを持ち、Next.jsの静的export対象とする。
+- `/privacy` はGoogle AdSense / Cookie、Googleポリシー外部リンク、Vercel Analytics / Speed Insights、免責事項を含む。
+- `/terms` はSettings内のTerms Modalと同じ日本語の規約データを参照し、サービス目的、アカウント管理、禁止事項、知的財産、サービス変更・停止、免責・責任制限、規約変更を含む。
 - 外部Googleリンクは別タブで開き、`noopener noreferrer` を付与する。
 
 ### 2.8 Shop / Reward Modal
@@ -414,6 +416,9 @@
 - Firebaseの永続セッションはWeb SDKへ委譲する。認証情報、パスワード、ID tokenをアプリ独自のlocalStorageへ保存しない。
 - Firebase設定はすべて `NEXT_PUBLIC_FIREBASE_*` 環境変数から読み、コードへ実値を埋め込まない。未設定時に疑似ユーザーを生成しない。
 - Firebase Web Appはブラウザ上かつ必須の公開設定値が揃った場合だけ初期化し、`getApps()[0]` があれば再利用する。静的プリレンダーまたは設定未投入のbuildではApp/Auth/Providerを生成せず、疑似ユーザーやハードコード値を使用しない。Google Providerのブラウザ固有設定はProvider生成後だけ適用する。
+- Firebase App Checkは公開reCAPTCHA Enterprise site keyが設定されたブラウザ環境だけでFirebase Appと同じライフサイクル上に初期化し、`getAuth()` より先に有効化する。token auto refreshを有効化し、Hot Reload時も同じApp Checkインスタンスを再利用する。
+- App Checkのローカルdebug providerは非productionかつ専用環境フラグが明示された場合だけ利用する。debug tokenをコード、公開環境変数、リポジトリへ保存せず、ゲーム用debug modeと混同しない。
+- AuthenticationへのApp Check enforcementはFirebase Authentication with Identity Platformへのアップグレード、Firebase / Google Cloud ConsoleでのWeb App・reCAPTCHA Enterprise key登録、metrics監視を終えてからConsoleで有効化する。コード配備だけをenforcement完了と扱わない。
 - Firebase Admin SDKはクライアントbundleへ含めない。認証状態監視とログイン操作はClient ComponentのEffectまたはユーザー操作からのみ開始し、静的build中には実行しない。
 
 ### 2.11 利用規約・プライバシーポリシーモーダル
@@ -512,6 +517,7 @@
 | `src/app/manifest.ts` | PWA Manifest Metadata Route、standalone表示、テーマ色、アプリアイコン定義 |
 | `src/app/globals.css` | Tailwind読込、全画面overflow制御、button cursor、no-scrollbar |
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |
+| `src/app/terms/page.tsx` | OAuth審査・直接参照向けの静的な利用規約ページ |
 | `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI |
 | `src/components/SettingsModal.tsx` | 日本語／英語の選択UI、ゲーム音声ON/OFF、Firebase `onAuthStateChanged` 購読、ゲスト／ログイン済みアカウント表示、Googleプロフィール画像、Firebaseログアウト導線、Focus/Breakテーマ対応 |
 | `src/components/AuthModal.tsx` | Firebase Googleポップアップ認証、メール／パスワードのログイン・新規登録、表示名更新、認証中・エラー表示 |
@@ -527,10 +533,11 @@
 | `src/utils/gameUtils.ts` | clamp、smoothStep、色補間、空色、診断種別、バフ時間整形 |
 | `src/utils/translations.ts` | `ja` / `en` の対訳辞書、利用規約・プライバシーポリシー本文、言語型、`pomotm_lang` 保存キー、保存値検証 |
 | `src/lib/config.ts` | タイマー時間、供給間隔、基本World寸法などのアプリ設定 |
-| `src/lib/firebase.ts` | Firebase Web SDKの単一初期化、Firebase AuthおよびGoogleAuthProviderのexport、環境変数参照 |
+| `src/lib/firebase.ts` | Firebase Web SDKの単一初期化、reCAPTCHA Enterprise App Checkのbrowser-only初期化、Firebase AuthおよびGoogleAuthProviderのexport、環境変数参照 |
 | `src/types/db.ts` | D1のusers/accounts/sessions/rankings/user_items/subscriptions行型、書込型、プレミアム判定ヘルパー |
 | `schema.sql` | Cloudflare D1の正規スキーマ、外部キー・一意制約・CHECK制約・検索インデックス |
-| `.env.example` | Firebase Web Appの `NEXT_PUBLIC_FIREBASE_*` 環境変数例。実プロジェクト値は環境ごとに設定する |
+| `.env.example` | Firebase Web App、App Check公開site key、local debug opt-inの `NEXT_PUBLIC_FIREBASE_*` 環境変数例。実プロジェクト値は環境ごとに設定する |
+| `SECURITY.md` | 現在の通信境界、App CheckとConsole設定、コスト・quotaリスク、将来APIの必須防御 |
 | `next.config.ts` | 開発オリジン許可、`output: "export"` による静的 `out` 生成 |
 | `wrangler.json` | `pomo-tm` の静的Assets設定。配信元は `./out` |
 | `package.json` | Next.js static build後に `wrangler.json` を明示するpreview／本番deployの実行順序 |
@@ -593,20 +600,22 @@ page.tsx
 
 - 認証基盤はFirebase Authenticationへ一本化する。Auth.js、NextAuth Route Handler、Credentials Provider、独自D1 Adapter、独自メール登録APIは使用しない。
 - Firebase Web App設定は `NEXT_PUBLIC_FIREBASE_API_KEY`、`NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`、`NEXT_PUBLIC_FIREBASE_PROJECT_ID`、`NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`、`NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`、`NEXT_PUBLIC_FIREBASE_APP_ID` から読み込む。Analyticsを将来有効化する場合だけ `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` を設定する。
-- `src/lib/firebase.ts` はブラウザ上かつ必須の公開設定値が揃った場合だけFirebase Appを初期化し、既存Appがあれば再利用する。設定済み環境では `auth` と選択画面を毎回表示する `googleProvider` を共有し、環境変数未設定の静的buildでは両者をnullとしてプリレンダーを継続する。
+- `src/lib/firebase.ts` はブラウザ上かつ必須の公開設定値が揃った場合だけFirebase Appを初期化し、既存Appがあれば再利用する。App Check公開site keyがある場合はreCAPTCHA Enterprise providerをAuthより先に一度だけ初期化する。設定済み環境では `appCheck`、`auth` と選択画面を毎回表示する `googleProvider` を共有し、環境変数未設定の静的buildでは各値をnullとしてプリレンダーを継続する。
 - Google認証は `signInWithPopup()`、メールログインは `signInWithEmailAndPassword()`、新規登録は `createUserWithEmailAndPassword()` を使用する。新規登録後は `updateProfile()` で表示名を設定する。
 - メール新規登録後は `sendEmailVerification()` を実行し、送信成功時は作成直後のセッションを維持する。送信失敗時だけ安全のためサインアウトする。メールログイン後は `emailVerified` がtrueの場合だけモーダルを閉じる。
 - 未確認ユーザーの再送操作は、登録直後の同一セッションが残っていればそのUserを使用する。セッションがない場合だけメール／パスワードで一時再認証し、`sendEmailVerification()` 後にサインアウトする。成功後60秒のcooldown中は再送ボタンを無効化する。
 - Settings Modalは既存の `onAuthStateChanged()` 購読を一つだけ維持し、フォーカス・表示復帰時に未確認password userを `reload()` して最新状態へ同期する。Effect cleanupで購読とDOMイベントを解除し、未確認Userはログイン済み表示から除外する。ログアウトは `signOut(auth)` を使用する。
 - 認証モーダルは設定画面から明示的に開いた場合だけ表示する。未ログイン時に自動表示せず、ゲストはタイマー・物理・ゲーム機能を制限なく利用できる。
 - Firebase ConsoleではGoogleとメール／パスワードのSign-in providerを有効化し、ローカルおよび本番のホスト名をAuthorized domainsへ登録する。
+- Authentication App Checkを利用する本番projectはIdentity Platformへアップグレードし、Firebase App Checkへ本番Web AppとreCAPTCHA Enterprise score-based keyを登録する。enforcement前にmetricsで正規通信を確認し、料金・quota・提供条件をConsoleで確認する。
+- 現在は独自 `/api/*`、D1 runtime接続、Cloudflare Rate Limiting ruleを持たない。将来APIを公開する場合はAuthentication、App Checkのサーバー検証、Cloudflare Rate Limiting、server-side input validation、endpoint/user quota、secretを含めないloggingを必須とする。詳細は `SECURITY.md` に従う。
 - `schema.sql` とD1の既存ユーザー関連テーブルは将来のゲームデータ同期・課金連携用の設計として残るが、ブラウザ認証やパスワード検証には使用しない。
 
 ## 5. 変更時チェックリスト
 
 - `npx tsc --noEmit` が成功すること。
-- `npm run build` で `/`、`/privacy` が生成されること。
-- `npm run build` で `out` が生成され、`out/index.html`、`out/privacy.html`、`out/manifest.webmanifest` が存在すること。
+- `npm run build` で `/`、`/privacy`、`/terms` が生成されること。
+- `npm run build` で `out` が生成され、`out/index.html`、`out/privacy.html`、`out/terms.html`、`out/manifest.webmanifest` が存在すること。
 - `npx wrangler deploy --dry-run --config wrangler.json` が `./out` のassetsを読み込み、entry-pointまたはassets directory missingを報告しないこと。
 - `wrangler.json` のCustom Domainが `pomotm.com` と `www.pomotm.com` の2件で、どちらも `custom_domain: true` であること。
 - Focus/Break/Pause/Reset/Spaceキー、Reward分岐、Bonus Break終了リセットを確認すること。
@@ -624,4 +633,5 @@ page.tsx
 - Settingsの音量は初期ONで、OFF時は着地音とループ音だけが停止し、再読込後も `pomotm_sound_enabled` から復元されること。破損値・Storage利用不能時はONとなり、OFF中の接地音をON復帰時に遡って鳴らさないこと。
 - Settings最下部のTerms/Privacyリンクが日英で切り替わり、各長文モーダルがスクロールでき、閉じた後もSettingsが表示されていること。
 - 未ログインで認証UIが自動表示されず、タイマーとゲームを制限なく利用できること。SettingsからAuth Modalを開閉できること。Firebase Googleログイン後に名前・メール・画像が表示されること。メール登録では8〜30文字・英大文字・英小文字・数字を満たすパスワードだけがFirebaseへ送信されること。目アイコンで表示を切り替えられること。確認メール送信後も未確認ユーザーはログイン済み表示から除外され、確認リンク完了後は追加ログインなしでSettingsへ反映されること。再送が60秒間連打防止されること。重複メール・不正入力・誤パスワード・ポップアップキャンセルが安全に処理されること。ログアウト後に `onAuthStateChanged()` 経由でゲスト表示へ戻ること。
+- App Check本番key設定後にGoogle・メール認証がVerifiedとしてmetricsへ記録されること。production buildでdebug providerが無効であることを確認し、Authentication enforcementはIdentity Platform、料金・quota、正規通信を確認してからConsoleで有効化すること。
 - ユーザー操作後の初回接地で通常／GiantのSEが1回だけ鳴り、大量同時接地で連打されないこと。UFO／Space Alien表示中だけループ音が鳴り、退場・タブ非表示・アンマウントで停止すること。
