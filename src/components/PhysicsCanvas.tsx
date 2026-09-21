@@ -104,6 +104,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
     isDebugMode,
     debugUfoMode = false,
     debugCatMode = false,
+    soundEnabled = true,
     isBonusBreakMode = false,
     timerMode,
     isTimerRunning,
@@ -129,6 +130,8 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
   const isDebugModeRef = useRef(isDebugMode);
   const debugUfoModeRef = useRef(debugUfoMode);
   const debugCatModeRef = useRef(debugCatMode);
+  const soundEnabledRef = useRef(soundEnabled);
+  const applySoundEnabledRef = useRef<(enabled: boolean) => void>(() => undefined);
   const isBonusBreakModeRef = useRef(isBonusBreakMode);
   const isFocusRunningRef = useRef(timerMode === "focus" && isTimerRunning);
   const isSupplyRunningRef = useRef(timerMode === "focus" && isTimerRunning);
@@ -137,6 +140,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
   const themeDirtyRef = useRef(false);
   activeBuffsRef.current = activeBuffs;
   isDebugModeRef.current = isDebugMode === true;
+  soundEnabledRef.current = soundEnabled === true;
   isBonusBreakModeRef.current = isBonusBreakMode === true;
   breakModeRef.current = timerMode === "break";
 
@@ -152,6 +156,10 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
   useEffect(() => { isDebugModeRef.current = isDebugMode; }, [isDebugMode]);
   useEffect(() => { debugUfoModeRef.current = debugUfoMode; }, [debugUfoMode]);
   useEffect(() => { debugCatModeRef.current = debugCatMode; }, [debugCatMode]);
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+    applySoundEnabledRef.current(soundEnabled);
+  }, [soundEnabled]);
   useEffect(() => { isBonusBreakModeRef.current = isBonusBreakMode; }, [isBonusBreakMode]);
   useEffect(() => { altitudeChangeRef.current = onAltitudeChange; }, [onAltitudeChange]);
   useEffect(() => {
@@ -235,7 +243,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       }
     };
     const syncAlienLoopAudio = (shouldPlay: boolean) => {
-      if (!shouldPlay) {
+      if (!shouldPlay || !soundEnabledRef.current) {
         if (alienLoopRequested || !alienLoopAudio.paused || alienLoopAudio.currentTime > 0) {
           stopAndResetAudio(alienLoopAudio);
         }
@@ -259,6 +267,11 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       audioUnlocked = true;
       alienLoopPlaybackBlocked = false;
       if (alienLoopRequested) syncAlienLoopAudio(true);
+    };
+    applySoundEnabledRef.current = (enabled) => {
+      if (enabled) return;
+      syncAlienLoopAudio(false);
+      [...tomatoLandingAudioPool, ...giantLandingAudioPool].forEach(stopAndResetAudio);
     };
     window.addEventListener("pointerdown", unlockAudio, { capture: true, passive: true });
     window.addEventListener("keydown", unlockAudio, true);
@@ -953,6 +966,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
         || other.label.startsWith("archived-terrain");
       if (!landedOnTomato && !landedOnGround) return;
       tomato.hasPlayedLandSound = true;
+      if (!soundEnabledRef.current) return;
       if (!audioUnlocked) return;
 
       const isGiant = tomato.radius / 22.5 >= 2;
@@ -3005,6 +3019,7 @@ export const PhysicsCanvas = forwardRef<PhysicsCanvasHandle, PhysicsCanvasProps>
       addRef.current = () => undefined;
       removeGoldenRef.current = () => 0;
       saveCameraStateRef.current = () => undefined;
+      applySoundEnabledRef.current = () => undefined;
     };
     // Counts are read only for initial restoration.
     // eslint-disable-next-line react-hooks/exhaustive-deps

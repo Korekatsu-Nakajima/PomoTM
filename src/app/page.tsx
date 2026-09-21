@@ -27,6 +27,7 @@ const button = "inline-flex shrink-0 items-center justify-center gap-1 rounded-f
 const quiet = `${button} bg-zinc-800 text-zinc-100 ring-1 ring-inset ring-zinc-700 hover:bg-zinc-700`;
 const INITIAL_ITEM_COUNTS: ItemCounts = { doubleDrop: 0, balloonBoost: 0, goldBoost: 0 };
 const DEFAULT_PREMIUM_ACCESS = true;
+const SOUND_ENABLED_STORAGE_KEY = "pomotm_sound_enabled";
 
 export default function Home() {
   const isDebugMode = useDebugMode();
@@ -41,6 +42,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [language, setLanguage] = useState<Language>("ja");
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [hydrated, setHydrated] = useState(false);
   const [altitude, setAltitude] = useState(0);
   const [maxAltitude, setMaxAltitude] = useState(0);
@@ -88,6 +90,16 @@ export default function Home() {
     }
   }, []);
   useEffect(() => {
+    try {
+      const savedSoundEnabled = window.localStorage.getItem(SOUND_ENABLED_STORAGE_KEY);
+      if (savedSoundEnabled === "true") setSoundEnabled(true);
+      else if (savedSoundEnabled === "false") setSoundEnabled(false);
+      else if (savedSoundEnabled !== null) window.localStorage.removeItem(SOUND_ENABLED_STORAGE_KEY);
+    } catch {
+      // localStorageが利用できない環境では既定のONを維持する。
+    }
+  }, []);
+  useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
   const changeLanguage = useCallback((nextLanguage: Language) => {
@@ -96,6 +108,14 @@ export default function Home() {
       window.localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
     } catch {
       // 保存できない環境でも、そのセッション中の表示切り替えは維持する。
+    }
+  }, []);
+  const changeSoundEnabled = useCallback((enabled: boolean) => {
+    setSoundEnabled(enabled);
+    try {
+      window.localStorage.setItem(SOUND_ENABLED_STORAGE_KEY, String(enabled));
+    } catch {
+      // 保存できない環境でも、そのセッション中の音量設定は維持する。
     }
   }, []);
   const awardTomato = useCallback(() => {
@@ -350,6 +370,7 @@ export default function Home() {
               isDebugMode={isDebugMode}
               debugUfoMode={isDebugMode && debugUfoMode}
               debugCatMode={isDebugMode && debugCatMode}
+              soundEnabled={soundEnabled}
               isBonusBreakMode={isBonusBreakMode}
               timerMode={timer.mode}
               isTimerRunning={timer.running}
@@ -453,6 +474,8 @@ export default function Home() {
             onClose={() => setSettingsOpen(false)}
             language={language}
             onLanguageChange={changeLanguage}
+            soundEnabled={soundEnabled}
+            onSoundEnabledChange={changeSoundEnabled}
             isBreak={isBreak}
             onOpenAuth={() => setAuthOpen(true)}
           />

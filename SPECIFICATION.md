@@ -284,6 +284,8 @@
 - 着地音は各種3個のAudioプール、通常0.2／Giant 0.3の音量、通常70ms／Giant 110msのクールダウンを使用し、同一フレームの大量衝突でAudio要素を無制限生成しない。
 - `/audio/ailian.mp3` はUFOまたはSpace Alienが画面内に1体以上存在する間だけ音量0.18・loopで再生する。両イベントの退場、ページ非表示、PhysicsCanvasのアンマウント時にpauseし、再生位置を0へ戻す。Space Octopus単独では再生しない。
 - ブラウザの自動再生制限に従い、windowの初回pointerdownまたはkeydown後だけ再生する。すべての `play()` Promise拒否は捕捉し、ゲームループへ例外を伝播させない。
+- Settingsの「音量 / Sound」はゲーム音声だけをON/OFFする。既定値はONとし、`pomotm_sound_enabled` に文字列 `true` / `false` だけを保存する。欠損・破損値・localStorage利用不能時はONへ安全に戻す。
+- OFFへの切替時は着地音のAudioプールとUFO／Space Alienループ音を即時停止して再生位置を0へ戻す。OFF中も接地済みフラグ、物理、イベント、描画、タイマーは進行し、ON復帰時に過去の着地音を遡って再生しない。UFO／Space Alienが継続中なら既存RAF判定でループ音を再開する。
 
 ### 1.16 Cloudflare D1データモデル
 
@@ -391,6 +393,7 @@
 - 言語Stateは `page.tsx` が所有し、`src/utils/translations.ts` の辞書を参照する。Shopは `language` Propsを受け取り、購入・使用・アンロック処理を変更せず表示文言だけを切り替える。
 - 選択言語はlocalStorageキー `pomotm_lang` に `ja` または `en` として保存する。不明値、破損値、localStorage利用不能時は日本語を安全な既定値とする。
 - 言語変更時はルート要素の `lang` 属性も同じ値へ同期する。
+- SettingsにはLucide `Volume2` / `VolumeX` を使う「音量 / Sound」スイッチを配置し、ON/OFFを即時に `page.tsx` のState、PhysicsCanvasのRefへ同期する。Matter effectの依存配列は変更しない。
 - Settings Modalはカード全体を覆う `z-[70]`。背景クリックまたは閉じるボタンで閉じ、Focus/Breakテーマを継承する。
 - Settings Modal最下部には、抑えたグレーの小文字で「利用規約 | プライバシーポリシー」または英語表記を横並びに表示する。各リンクはページ遷移せず、Settingsより前面のスクロール可能な法務モーダルを開く。
 
@@ -410,7 +413,7 @@
 - Settings Modalは `onAuthStateChanged()` を購読し、Firebase `User` の表示名・メール・プロフィール画像を描画する。password providerの未確認ユーザーは表示対象から除外し、ログアウトは `signOut(auth)` を実行する。
 - Firebaseの永続セッションはWeb SDKへ委譲する。認証情報、パスワード、ID tokenをアプリ独自のlocalStorageへ保存しない。
 - Firebase設定はすべて `NEXT_PUBLIC_FIREBASE_*` 環境変数から読み、コードへ実値を埋め込まない。未設定時に疑似ユーザーを生成しない。
-- Firebase Web Appは `getApps()[0]` があれば再利用し、存在しない場合だけ `initializeApp()` を実行する。Google Providerのブラウザ固有設定は `window` が存在する場合だけ適用する。
+- Firebase Web Appはブラウザ上かつ必須の公開設定値が揃った場合だけ初期化し、`getApps()[0]` があれば再利用する。静的プリレンダーまたは設定未投入のbuildではApp/Auth/Providerを生成せず、疑似ユーザーやハードコード値を使用しない。Google Providerのブラウザ固有設定はProvider生成後だけ適用する。
 - Firebase Admin SDKはクライアントbundleへ含めない。認証状態監視とログイン操作はClient ComponentのEffectまたはユーザー操作からのみ開始し、静的build中には実行しない。
 
 ### 2.11 利用規約・プライバシーポリシーモーダル
@@ -510,7 +513,7 @@
 | `src/app/globals.css` | Tailwind読込、全画面overflow制御、button cursor、no-scrollbar |
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |
 | `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI |
-| `src/components/SettingsModal.tsx` | 日本語／英語の選択UI、Firebase `onAuthStateChanged` 購読、ゲスト／ログイン済みアカウント表示、Googleプロフィール画像、Firebaseログアウト導線、Focus/Breakテーマ対応 |
+| `src/components/SettingsModal.tsx` | 日本語／英語の選択UI、ゲーム音声ON/OFF、Firebase `onAuthStateChanged` 購読、ゲスト／ログイン済みアカウント表示、Googleプロフィール画像、Firebaseログアウト導線、Focus/Breakテーマ対応 |
 | `src/components/AuthModal.tsx` | Firebase Googleポップアップ認証、メール／パスワードのログイン・新規登録、表示名更新、認証中・エラー表示 |
 | `src/components/TermsModal.tsx` | 日英利用規約のスクロール表示、Settingsへ戻る閉じる操作、Focus/Breakテーマ対応 |
 | `src/components/PrivacyModal.tsx` | 日英プライバシーポリシーのスクロール表示、Settingsへ戻る閉じる操作、Focus/Breakテーマ対応 |
@@ -590,7 +593,7 @@ page.tsx
 
 - 認証基盤はFirebase Authenticationへ一本化する。Auth.js、NextAuth Route Handler、Credentials Provider、独自D1 Adapter、独自メール登録APIは使用しない。
 - Firebase Web App設定は `NEXT_PUBLIC_FIREBASE_API_KEY`、`NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`、`NEXT_PUBLIC_FIREBASE_PROJECT_ID`、`NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`、`NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`、`NEXT_PUBLIC_FIREBASE_APP_ID` から読み込む。Analyticsを将来有効化する場合だけ `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` を設定する。
-- `src/lib/firebase.ts` はFirebase Appを重複初期化せず、既存Appがあれば再利用する。`auth` と選択画面を毎回表示する `googleProvider` を共有exportする。
+- `src/lib/firebase.ts` はブラウザ上かつ必須の公開設定値が揃った場合だけFirebase Appを初期化し、既存Appがあれば再利用する。設定済み環境では `auth` と選択画面を毎回表示する `googleProvider` を共有し、環境変数未設定の静的buildでは両者をnullとしてプリレンダーを継続する。
 - Google認証は `signInWithPopup()`、メールログインは `signInWithEmailAndPassword()`、新規登録は `createUserWithEmailAndPassword()` を使用する。新規登録後は `updateProfile()` で表示名を設定する。
 - メール新規登録後は `sendEmailVerification()` を実行し、送信成功時は作成直後のセッションを維持する。送信失敗時だけ安全のためサインアウトする。メールログイン後は `emailVerified` がtrueの場合だけモーダルを閉じる。
 - 未確認ユーザーの再送操作は、登録直後の同一セッションが残っていればそのUserを使用する。セッションがない場合だけメール／パスワードで一時再認証し、`sendEmailVerification()` 後にサインアウトする。成功後60秒のcooldown中は再送ボタンを無効化する。
@@ -618,6 +621,7 @@ page.tsx
 - 猫の通常1/1,000・デバッグ1/100抽選、90ms運搬／落下アニメーション、125ms走行アニメーション、テーマ色反転、画面外削除を確認すること。猫の通過でSleeping Bodyが起床しないこと。
 - localStorage破損値でクラッシュせず、安全な初期値へ戻ること。
 - Settingsから日本語／英語を切り替えるとヘッダー・Shop・設定モーダル・Terms / Privacyリンクと法務本文が即時更新され、再読み込み後も `pomotm_lang` から復元されること。
+- Settingsの音量は初期ONで、OFF時は着地音とループ音だけが停止し、再読込後も `pomotm_sound_enabled` から復元されること。破損値・Storage利用不能時はONとなり、OFF中の接地音をON復帰時に遡って鳴らさないこと。
 - Settings最下部のTerms/Privacyリンクが日英で切り替わり、各長文モーダルがスクロールでき、閉じた後もSettingsが表示されていること。
 - 未ログインで認証UIが自動表示されず、タイマーとゲームを制限なく利用できること。SettingsからAuth Modalを開閉できること。Firebase Googleログイン後に名前・メール・画像が表示されること。メール登録では8〜30文字・英大文字・英小文字・数字を満たすパスワードだけがFirebaseへ送信されること。目アイコンで表示を切り替えられること。確認メール送信後も未確認ユーザーはログイン済み表示から除外され、確認リンク完了後は追加ログインなしでSettingsへ反映されること。再送が60秒間連打防止されること。重複メール・不正入力・誤パスワード・ポップアップキャンセルが安全に処理されること。ログアウト後に `onAuthStateChanged()` 経由でゲスト表示へ戻ること。
 - ユーザー操作後の初回接地で通常／GiantのSEが1回だけ鳴り、大量同時接地で連打されないこと。UFO／Space Alien表示中だけループ音が鳴り、退場・タブ非表示・アンマウントで停止すること。

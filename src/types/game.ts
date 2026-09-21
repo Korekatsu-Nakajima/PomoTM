@@ -17,6 +17,7 @@ export type PhysicsCanvasProps = {
   isDebugMode: boolean;
   debugUfoMode?: boolean;
   debugCatMode?: boolean;
+  soundEnabled?: boolean;
   isBonusBreakMode?: boolean;
   timerMode: "focus" | "break";
   isTimerRunning: boolean;

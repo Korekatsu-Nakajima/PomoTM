@@ -48,6 +48,9 @@ export type TranslationDictionary = {
     language: string;
     japanese: string;
     english: string;
+    sound: string;
+    soundOn: string;
+    soundOff: string;
     close: string;
   };
   legal: {
@@ -114,6 +117,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       language: "言語",
       japanese: "日本語",
       english: "English",
+      sound: "音量",
+      soundOn: "ON",
+      soundOff: "OFF",
       close: "設定を閉じる",
     },
     legal: {
@@ -289,6 +295,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       language: "Language",
       japanese: "日本語",
       english: "English",
+      sound: "Sound",
+      soundOn: "ON",
+      soundOff: "OFF",
       close: "Close Settings",
     },
     legal: {

@@ -134,14 +134,15 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
   }, [resendCooldown]);
 
   useEffect(() => {
-    if (!isOpen || !awaitingVerificationInSession) return;
+    if (!isOpen || !awaitingVerificationInSession || !auth) return;
+    const firebaseAuth = auth;
 
     let disposed = false;
     let refreshInProgress = false;
 
     const refreshVerificationState = async () => {
       if (refreshInProgress) return;
-      const currentUser = auth.currentUser;
+      const currentUser = firebaseAuth.currentUser;
       const usesPasswordProvider = currentUser?.providerData.some(
         (provider) => provider.providerId === "password",
       );
@@ -208,6 +209,10 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
 
   const runGoogleSignIn = async () => {
     if (pending) return;
+    if (!auth || !googleProvider) {
+      setError(t.genericError);
+      return;
+    }
     setPending(true);
     setError(null);
     try {
@@ -223,6 +228,10 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
   const submitEmailAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (pending) return;
+    if (!auth) {
+      setError(t.genericError);
+      return;
+    }
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail.includes("@") || password.length === 0) {
       setError(t.required);
@@ -287,6 +296,10 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
 
   const resendVerificationEmail = async () => {
     if (pending || resendCooldown > 0) return;
+    if (!auth) {
+      setError(t.genericError);
+      return;
+    }
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail.includes("@") || password.length < 8) {
       setError(t.resendRequiresPassword);

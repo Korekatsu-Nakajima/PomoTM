@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, reload, signOut, type User } from "firebase/auth";
-import { Languages, LogIn, LogOut, Settings, UserRound, X } from "lucide-react";
+import { Languages, LogIn, LogOut, Settings, UserRound, Volume2, VolumeX, X } from "lucide-react";
 import { PrivacyModal } from "@/components/PrivacyModal";
 import { TermsModal } from "@/components/TermsModal";
 import { auth } from "@/lib/firebase";
@@ -13,6 +13,8 @@ type SettingsModalProps = {
   onClose: () => void;
   language: Language;
   onLanguageChange: (language: Language) => void;
+  soundEnabled: boolean;
+  onSoundEnabledChange: (enabled: boolean) => void;
   isBreak: boolean;
   onOpenAuth: () => void;
 };
@@ -56,16 +58,23 @@ export function SettingsModal({
   onClose,
   language,
   onLanguageChange,
+  soundEnabled,
+  onSoundEnabledChange,
   isBreak,
   onOpenAuth,
 }: SettingsModalProps) {
-  const [user, setUser] = useState<User | null>(() => getVerifiedDisplayUser(auth.currentUser));
+  const [user, setUser] = useState<User | null>(() => getVerifiedDisplayUser(auth?.currentUser ?? null));
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [termsOpen, setTermsOpen] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
 
   useEffect(() => {
+    if (!auth) {
+      setUser(null);
+      return;
+    }
+    const firebaseAuth = auth;
     let disposed = false;
     let syncVersion = 0;
 
@@ -79,7 +88,7 @@ export function SettingsModal({
           await reload(nextUser).catch(() => undefined);
         }
       }
-      const currentUser = auth.currentUser;
+      const currentUser = firebaseAuth.currentUser;
       const sameCurrentUser = currentUser?.uid === nextUser?.uid
         || (!currentUser && !nextUser);
       if (!disposed && version === syncVersion && sameCurrentUser) {
@@ -87,8 +96,8 @@ export function SettingsModal({
       }
     };
 
-    const unsubscribe = onAuthStateChanged(auth, (nextUser) => void syncUser(nextUser));
-    const syncCurrentUser = () => void syncUser(auth.currentUser);
+    const unsubscribe = onAuthStateChanged(firebaseAuth, (nextUser) => void syncUser(nextUser));
+    const syncCurrentUser = () => void syncUser(firebaseAuth.currentUser);
     const syncCurrentUserWhenVisible = () => {
       if (document.visibilityState === "visible") syncCurrentUser();
     };
@@ -190,6 +199,32 @@ export function SettingsModal({
           </div>
         </fieldset>
 
+        <section className={`mt-6 border-t pt-5 ${isBreak ? "border-neutral-200" : "border-neutral-700"}`} aria-labelledby="sound-settings-title">
+          <div className="flex items-center justify-between gap-4">
+            <h3 id="sound-settings-title" className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em]">
+              {soundEnabled ? <Volume2 size={17} /> : <VolumeX size={17} />}
+              {t.settings.sound}
+            </h3>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={soundEnabled}
+              aria-label={`${t.settings.sound} ${soundEnabled ? t.settings.soundOn : t.settings.soundOff}`}
+              className={`inline-flex min-w-24 items-center justify-center gap-2 rounded-full border px-4 py-2 text-sm font-black transition ${soundEnabled
+                ? isBreak
+                  ? "border-emerald-500 bg-emerald-50 text-emerald-800"
+                  : "border-red-400 bg-red-400/10 text-red-200"
+                : isBreak
+                  ? "border-neutral-300 bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+                  : "border-neutral-700 bg-neutral-950/70 text-neutral-400 hover:bg-neutral-800"}`}
+              onClick={() => onSoundEnabledChange(!soundEnabled)}
+            >
+              {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              {soundEnabled ? t.settings.soundOn : t.settings.soundOff}
+            </button>
+          </div>
+        </section>
+
         <section className={`mt-6 border-t pt-5 ${isBreak ? "border-neutral-200" : "border-neutral-700"}`} aria-labelledby="account-settings-title">
           <h3 id="account-settings-title" className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.16em]">
             <UserRound size={17} />
@@ -224,6 +259,7 @@ export function SettingsModal({
                   setSigningOut(true);
                   setSignOutError(null);
                   try {
+                    if (!auth) throw new Error("Firebase Authentication is not configured.");
                     await signOut(auth);
                   } catch {
                     setSignOutError(account.logoutError);
