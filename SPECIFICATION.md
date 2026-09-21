@@ -300,6 +300,7 @@
 ### 1.17 Cloudflare静的Assetsデプロイ
 
 - Cloudflareへの本番配備方式はNext.js static exportとし、`next.config.ts`の `output: "export"` により `npm run build` がルートの `out` ディレクトリを生成する。
+- Cloudflare AssetsではNext.js Image Optimization serverを使用しないため、`next.config.ts`の `images.unoptimized` をtrueに固定する。
 - 正規のCloudflare設定はルートの `wrangler.json`。Worker名は `pomo-tm`、compatibility dateは `2026-09-21`、assets directoryは `./out` とする。静的assets-only配備のためWorker scriptの `main` は指定しない。
 - Metadata Routeの `/manifest.webmanifest` は `src/app/manifest.ts` の `dynamic = "force-static"` により静的export対象とする。
 - `npm run deploy` は先に `npm run build`を完了し、その後 `wrangler deploy --config wrangler.json` を実行する。Wranglerを直接実行する場合も `wrangler.json` を明示し、旧OpenNext設定を参照させない。
@@ -402,6 +403,8 @@
 - Settings Modalは `onAuthStateChanged()` を購読し、Firebase `User` の表示名・メール・プロフィール画像を描画する。password providerの未確認ユーザーは表示対象から除外し、ログアウトは `signOut(auth)` を実行する。
 - Firebaseの永続セッションはWeb SDKへ委譲する。認証情報、パスワード、ID tokenをアプリ独自のlocalStorageへ保存しない。
 - Firebase設定はすべて `NEXT_PUBLIC_FIREBASE_*` 環境変数から読み、コードへ実値を埋め込まない。未設定時に疑似ユーザーを生成しない。
+- Firebase Web Appは `getApps()[0]` があれば再利用し、存在しない場合だけ `initializeApp()` を実行する。Google Providerのブラウザ固有設定は `window` が存在する場合だけ適用する。
+- Firebase Admin SDKはクライアントbundleへ含めない。認証状態監視とログイン操作はClient ComponentのEffectまたはユーザー操作からのみ開始し、静的build中には実行しない。
 
 ### 2.11 利用規約・プライバシーポリシーモーダル
 
