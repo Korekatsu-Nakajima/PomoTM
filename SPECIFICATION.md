@@ -285,6 +285,18 @@
 - `/audio/ailian.mp3` はUFOまたはSpace Alienが画面内に1体以上存在する間だけ音量0.18・loopで再生する。両イベントの退場、ページ非表示、PhysicsCanvasのアンマウント時にpauseし、再生位置を0へ戻す。Space Octopus単独では再生しない。
 - ブラウザの自動再生制限に従い、windowの初回pointerdownまたはkeydown後だけ再生する。すべての `play()` Promise拒否は捕捉し、ゲームループへ例外を伝播させない。
 
+### 1.16 Cloudflare D1データモデル
+
+- サーバー永続化の正規スキーマはルートの `schema.sql`。Cloudflare D1 / SQLiteを対象とし、外部キーを有効化する。
+- 日時はUTCのISO-8601文字列、真偽値はSQLite整数 `0 | 1` で保存する。`src/types/db.ts` の `DatabaseDateTime` / `DatabaseBoolean` と一致させる。
+- `users` はメール認証用 `password_hash`、課金状態 `is_premium`、期限 `premium_until`、ゲストデータ移行用 `guest_id` を保持する。メールまたはguest IDのどちらかを必須とし、guest IDとメールは重複させない。
+- `accounts` はOAuth等の外部アカウントを管理し、providerとprovider側IDの組を一意にする。`sessions` はCookie用tokenと期限を管理する。
+- `rankings` は非負scoreを保持し、ユーザー削除時も表示名とscoreを残してuser参照だけをNULLにする。
+- `user_items` はユーザー・itemごとに一意で、消費型の `quantity`、バフ期限 `active_until`、永久解放用 `is_unlocked` / `unlocked_at` を同時に管理する。quantityを負数にしない。
+- `subscriptions` はStripe等のprovider、決済status、customer／price ID、期間、期末解約、キャンセル日時を保持する。ユーザー削除時は関連行も削除する。
+- `src/types/db.ts` は全6テーブルの行型、Insert/Update型、Subscription status unionを提供する。`isUserPremium()` はフラグに加えて期限切れも検査し、期限NULLの有効フラグは無期限として扱う。
+- `schema.sql` は新規DB構築用の正規定義であり、既存の本番D1へ推測で適用しない。既存テーブルへ反映する場合は、本番schemaを取得して差分マイグレーションを別途作成・レビューしてから実行する。
+
 ## 2. UI / レイアウト仕様（崩してはいけない要素）
 
 ### 2.1 全体構造とレイヤー
@@ -300,7 +312,6 @@
   - Shop Modal: `z-50`。
   - Reward Modal: `z-[60]`。
   - Settings Modal: `z-[70]`。
-  - Privacyリンク: 標高バッジと同じゲームカード内の `z-20`。
 - Canvasの親とCanvas自身に `min-w-0` / `max-w-full` / `overflow-hidden` を適用し、リサイズ時にカード外へ出さない。
 
 ### 2.2 タイマー表示
@@ -340,13 +351,11 @@
 - カード右下に `○○ m` のみを表示し、「標高」という接頭辞は付けない。
 - モバイルはbottom/right 12px、sm以上20px。半透明の丸いバッジ、z-20、pointer-eventsなし。
 
-### 2.6 プライバシーポリシーリンク
+### 2.6 法務リンクの配置
 
-- Homeのゲームカード内で、右下の標高バッジと同じ絶対配置オーバーレイ層へ1つだけ配置する。Root Layoutには重複配置しない。
-- ゲームカード左下。`left-3`、sm以上 `left-5`。
-- 下位置は右下の標高バッジと同じくモバイル `bottom-3`、sm以上 `bottom-5` とし、両要素を完全に同じ水平ラインへ揃える。
-- `z-20`、`pointer-events-auto`。標高バッジと同じ `px-3 py-1.5 text-xs leading-4`、丸型境界、半透明背景の控えめなテキストリンク。
-- 遷移先は `/privacy`。中央や右下へ戻さない。
+- Homeのゲームカードには利用規約・プライバシーポリシーへのリンクを表示しない。旧左下プライバシーポリシーリンクは削除済みとする。
+- UI上の法務導線はSettings Modal最下部の控えめなTerms / Privacyリンクへ一本化する。
+- AdSense・OAuth審査および直接参照用の公開 `/privacy` ページは維持するが、Home画面には重複リンクを戻さない。
 
 ### 2.7 プライバシーポリシーページ
 
@@ -365,11 +374,34 @@
 ### 2.9 言語設定 / Settings Modal
 
 - ヘッダーツールバーのLucide `Settings` 歯車ボタンから設定モーダルを開く。
-- 設定モーダルでは `日本語`（`ja`）と `English`（`en`）をラジオボタンで選択し、選択直後にヘッダー、ページタイトル、Privacyリンク、Shop、設定モーダルの表示文言を切り替える。
+- 設定モーダルでは `日本語`（`ja`）と `English`（`en`）をラジオボタンで選択し、選択直後にヘッダー、ページタイトル、Shop、Settings内のTerms / Privacyリンクと法務本文を切り替える。
 - 言語Stateは `page.tsx` が所有し、`src/utils/translations.ts` の辞書を参照する。Shopは `language` Propsを受け取り、購入・使用・アンロック処理を変更せず表示文言だけを切り替える。
 - 選択言語はlocalStorageキー `pomotm_lang` に `ja` または `en` として保存する。不明値、破損値、localStorage利用不能時は日本語を安全な既定値とする。
 - 言語変更時はルート要素の `lang` 属性も同じ値へ同期する。
 - Settings Modalはカード全体を覆う `z-[70]`。背景クリックまたは閉じるボタンで閉じ、Focus/Breakテーマを継承する。
+- Settings Modal最下部には、抑えたグレーの小文字で「利用規約 | プライバシーポリシー」または英語表記を横並びに表示する。各リンクはページ遷移せず、Settingsより前面のスクロール可能な法務モーダルを開く。
+
+### 2.10 ゲスト利用とアカウント認証
+
+- アプリは常にゲスト利用を既定とし、起動時や通常操作時に認証モーダルを自動表示しない。未ログインでもタイマー、物理ゲーム、アイテム、設定などの基本機能を制限しない。
+- Settings Modal内のアカウント設定からだけ認証モーダルを開く。未ログイン時は「ログイン / アカウント作成」、ログイン時はメールアドレス・表示名とログアウト操作を表示する。
+- `AuthModal` は設定画面の上に `z-[80]` で重なり、Firebase AuthenticationによるGoogleポップアップ認証、メール／パスワードのログイン・新規登録タブ、後で閉じる操作を提供する。閉じた場合は元の設定画面へ戻る。
+- Googleログインは `signInWithPopup(auth, googleProvider)` を使用する。ページ遷移や独自 `/api/auth` Routeを使用せず、成功時はFirebaseの認証Stateへ即時反映してモーダルを閉じる。
+- メールログインは `signInWithEmailAndPassword()`、新規登録は `createUserWithEmailAndPassword()` を使用する。登録直後に `updateProfile()` で1〜80文字の表示名を保存する。
+- メール新規登録後は `sendEmailVerification()` で確認メールを送り、案内を表示して即座に `signOut(auth)` する。確認リンクを開くまでログイン済みUIへ遷移させない。
+- メールログイン成功後も `user.emailVerified` を検査し、未確認なら案内と再送ボタンを表示して即座にサインアウトする。再送時は入力済み資格情報で一時的に再認証し、メール送信後に再びサインアウトする。
+- 確認メール再送は成功後60秒間無効化し、残り秒数をボタン内に表示する。Googleポップアップ認証はメール確認判定の対象外とする。
+- Settings Modalは `onAuthStateChanged()` を購読し、Firebase `User` の表示名・メール・プロフィール画像を描画する。password providerの未確認ユーザーは表示対象から除外し、ログアウトは `signOut(auth)` を実行する。
+- Firebaseの永続セッションはWeb SDKへ委譲する。認証情報、パスワード、ID tokenをアプリ独自のlocalStorageへ保存しない。
+- Firebase設定はすべて `NEXT_PUBLIC_FIREBASE_*` 環境変数から読み、コードへ実値を埋め込まない。未設定時に疑似ユーザーを生成しない。
+
+### 2.11 利用規約・プライバシーポリシーモーダル
+
+- `TermsModal` と `PrivacyModal` はSettings Modalからだけ開き、`z-[90]` でSettingsより前面に表示する。背景クリック、右上の閉じるアイコン、下部の閉じるボタンでSettingsへ戻る。
+- モーダルカードは `max-w-2xl`、viewport内の最大高を持ち、長文部分だけを縦スクロールさせる。Focus/Breakテーマ、スマートフォン幅、日本語／英語切替を継承する。
+- 利用規約はサービス目的、アカウント管理、禁止事項、知的財産、サービス変更・停止、免責・責任制限、規約変更を含む。
+- プライバシーポリシーはFirebase/Googleプロフィール情報、メール確認状態、localStorage、将来のCloudflare D1・課金状態、技術情報、利用目的、委託先、第三者提供制限、安全管理、保存期間、削除、未成年者、変更方針を含む。
+- Googleのパスワード、決済カード番号、Firebase ID tokenをアプリ独自に保存しないことを明記する。実在しない運営者名・連絡先・保証を記載しない。
 
 ## 3. 現在のデバッグ機能・制御仕様
 
@@ -445,7 +477,7 @@
 | ファイル | 責務 | 変更時の保護事項 |
 | --- | --- | --- |
 | `src/components/PhysicsCanvas.tsx` | Matter Engine/World所有、RAF、Body lifecycle、衝突、感染、Terrain、カメラ、全高度イベント、描画統括 | `Engine.update`の位置、Ref同期、Set間移動、イベント順、描画順を維持。最重要核心ファイル |
-| `src/app/page.tsx` | 全画面UI、React State、タイマー接続、Reward、アイテム付与・使用、永久解放購入、Gold通貨、Spaceキー、広告配置、カード内Privacyリンク | z-index、モバイルCanvas top 7.75rem、ツールバーの横スクロールとno-scrollbar、標高とPrivacyリンクの同一bottom、モーダル制御を維持 |
+| `src/app/page.tsx` | 全画面UI、React State、タイマー接続、Reward、アイテム付与・使用、永久解放購入、Gold通貨、認証モーダル開閉、Spaceキー、広告配置 | z-index、モバイルCanvas top 7.75rem、ツールバーの横スクロールとno-scrollbar、標高バッジ、モーダル制御を維持 |
 | `src/hooks/useTimer.ts` | 25/5分、deadline、通常・デバッグ供給、モード遷移 | Pauseと供給停止の連動、完了時コールバック順を維持 |
 | `src/hooks/useDebugMode.ts` | URL、公開環境変数、NODE_ENVから統合デバッグモードを判定 | 厳密な`debug === "true"`、SSR安全性、localStorage非使用を維持 |
 | `src/constants/assets.ts` | 確率、間隔、物理設定、保存キー、SVG Path、初期State | 数値変更はゲームバランスと永続化互換性へ直結 |
@@ -460,8 +492,11 @@
 | `src/app/globals.css` | Tailwind読込、全画面overflow制御、button cursor、no-scrollbar |
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |
 | `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI |
-| `src/components/SettingsModal.tsx` | 日本語／英語の選択UI、Focus/Breakテーマ対応、設定モーダル表示 |
-| `src/components/RewardModal.tsx` | 疑似リワード動画UI、開封前の宝箱タップ演出、開封後の獲得アイテム詳細UI |
+| `src/components/SettingsModal.tsx` | 日本語／英語の選択UI、Firebase `onAuthStateChanged` 購読、ゲスト／ログイン済みアカウント表示、Googleプロフィール画像、Firebaseログアウト導線、Focus/Breakテーマ対応 |
+| `src/components/AuthModal.tsx` | Firebase Googleポップアップ認証、メール／パスワードのログイン・新規登録、表示名更新、認証中・エラー表示 |
+| `src/components/TermsModal.tsx` | 日英利用規約のスクロール表示、Settingsへ戻る閉じる操作、Focus/Breakテーマ対応 |
+| `src/components/PrivacyModal.tsx` | 日英プライバシーポリシーのスクロール表示、Settingsへ戻る閉じる操作、Focus/Breakテーマ対応 |
+| `src/components/RewardModal.tsx` | 疑似リワード動画UI、自動フェードする獲得アイテムトースト |
 | `src/components/PWAInstallPrompt.tsx` | beforeinstallprompt保持、スタンドアロン判定、7日間の再表示抑制、インストール誘導UI |
 | `src/components/AdContainer.tsx` | Desktop/Mobile広告プレースホルダー、30秒refresh state |
 | `src/hooks/useGameStorage.ts` | localStorageの検証付き読込・保存、カメラ状態API |
@@ -469,9 +504,13 @@
 | `src/utils/physicsSafety.ts` | めり込み30%補正、有限数検査、速度30超から25へのクランプ |
 | `src/utils/terrainUtils.ts` | 中央Core範囲、可視Body抽出、Compound Terrainパーツ生成 |
 | `src/utils/gameUtils.ts` | clamp、smoothStep、色補間、空色、診断種別、バフ時間整形 |
-| `src/utils/translations.ts` | `ja` / `en` の対訳辞書、言語型、`pomotm_lang` 保存キー、保存値検証 |
+| `src/utils/translations.ts` | `ja` / `en` の対訳辞書、利用規約・プライバシーポリシー本文、言語型、`pomotm_lang` 保存キー、保存値検証 |
 | `src/lib/config.ts` | タイマー時間、供給間隔、基本World寸法などのアプリ設定 |
-| `next.config.ts` | 開発オリジン許可 |
+| `src/lib/firebase.ts` | Firebase Web SDKの単一初期化、Firebase AuthおよびGoogleAuthProviderのexport、環境変数参照 |
+| `src/types/db.ts` | D1のusers/accounts/sessions/rankings/user_items/subscriptions行型、書込型、プレミアム判定ヘルパー |
+| `schema.sql` | Cloudflare D1の正規スキーマ、外部キー・一意制約・CHECK制約・検索インデックス |
+| `.env.example` | Firebase Web Appの `NEXT_PUBLIC_FIREBASE_*` 環境変数例。実プロジェクト値は環境ごとに設定する |
+| `next.config.ts` | 開発オリジン許可、`next dev`でCloudflare bindingを使うOpenNext初期化 |
 
 ### 4.3 コンポーネント間のデータフロー
 
@@ -489,9 +528,14 @@ page.tsx
 │  ├─ 消費型アイテム使用時に所持数を1減らして30分バフを開始
 │  └─ 永久解放購入時のみ PhysicsCanvas.removeGolden(count)
 ├─ SettingsModal
-│  └─ 言語選択 ──> page.tsxのlanguage State更新 ──> pomotm_lang保存・UI即時更新
+│  ├─ 言語選択 ──> page.tsxのlanguage State更新 ──> pomotm_lang保存・UI即時更新
+│  └─ onAuthStateChanged ──> Firebase User表示 / signOut(auth)
+├─ AuthModal
+│  ├─ Google ──> signInWithPopup ──> Firebase Authentication
+│  ├─ 新規登録 ──> createUserWithEmailAndPassword ──> updateProfile
+│  └─ Email login ──> signInWithEmailAndPassword ──> Firebase Authentication
 ├─ RewardModal
-│  └─ 動画選択 ──> 宝箱表示 ──> アイテム詳細表示 ──> 休憩タイマー再開
+│  └─ 動画選択 ──> アイテム付与 ──> 自動消滅トースト／休憩タイマー再開
 └─ AdContainer (mobile / desktop)
 ```
 
@@ -522,6 +566,19 @@ page.tsx
 - 自動切替が無効な場合は従来どおり動画選択を表示する。動画完了時はBonus Break、スキップ時は通常Breakを開始し、どちらもアイテムトーストを表示する。
 - Matter.jsの更新はタイマー・動画・トーストの状態に関係なく継続する。
 
+## 4.7 Firebase Authentication連携
+
+- 認証基盤はFirebase Authenticationへ一本化する。Auth.js、NextAuth Route Handler、Credentials Provider、独自D1 Adapter、独自メール登録APIは使用しない。
+- Firebase Web App設定は `NEXT_PUBLIC_FIREBASE_API_KEY`、`NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`、`NEXT_PUBLIC_FIREBASE_PROJECT_ID`、`NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`、`NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`、`NEXT_PUBLIC_FIREBASE_APP_ID` から読み込む。Analyticsを将来有効化する場合だけ `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` を設定する。
+- `src/lib/firebase.ts` はFirebase Appを重複初期化せず、既存Appがあれば再利用する。`auth` と選択画面を毎回表示する `googleProvider` を共有exportする。
+- Google認証は `signInWithPopup()`、メールログインは `signInWithEmailAndPassword()`、新規登録は `createUserWithEmailAndPassword()` を使用する。新規登録後は `updateProfile()` で表示名を設定する。
+- メール新規登録後は `sendEmailVerification()` を実行し、成功・失敗にかかわらず作成直後のセッションを `signOut(auth)` で終了する。メールログイン後は `emailVerified` がtrueの場合だけモーダルを閉じる。
+- 未確認ユーザーの再送操作はメール／パスワードで一時再認証し、`sendEmailVerification()` 後に必ずサインアウトする。成功後60秒のcooldown中は再送ボタンを無効化する。
+- Settings Modalは `onAuthStateChanged()` のunsubscribe関数をEffect cleanupとして返し、認証状態をFirebase `User` から直接描画する。password providerかつ未確認のUserはログイン済み表示から除外する。ログアウトは `signOut(auth)` を使用する。
+- 認証モーダルは設定画面から明示的に開いた場合だけ表示する。未ログイン時に自動表示せず、ゲストはタイマー・物理・ゲーム機能を制限なく利用できる。
+- Firebase ConsoleではGoogleとメール／パスワードのSign-in providerを有効化し、ローカルおよび本番のホスト名をAuthorized domainsへ登録する。
+- `schema.sql` とD1の既存ユーザー関連テーブルは将来のゲームデータ同期・課金連携用の設計として残るが、ブラウザ認証やパスワード検証には使用しない。
+
 ## 5. 変更時チェックリスト
 
 - `npx tsc --noEmit` が成功すること。
@@ -530,12 +587,14 @@ page.tsx
 - Matter.jsがタイマー停止中とページ非表示中にも更新されること。
 - 320px程度の狭い画面でツールバーが親幅を押し広げず、横スワイプでき、スクロールバーが見えないこと。
 - Desktop広告が右側300〜336px、Mobile広告が高さ50pxで、Canvas開始位置が7.75remであること。
-- Privacyリンクが画面左下、標高が右下で重ならないこと。
+- Home画面に旧プライバシーポリシーリンクがなく、法務リンクがSettings最下部だけに表示されること。
 - 通常、Bonus、Gold Boostの色・サイズ独立抽選を確認すること。
 - 3,000m、5,000m、10,000mのイベント境界と45秒／15秒切替を確認すること。
 - デバッグOFFでZap・UFO・10秒・診断ログ／表示が無効、デバッグONで従来機能が有効になること。物理診断の安全処理は常時動作すること。
 - Deep Coreの中央限定Static化、側面Dynamic、Terrain吸収の絶対Y基準を確認すること。
 - 猫の通常1/1,000・デバッグ1/100抽選、90ms運搬／落下アニメーション、125ms走行アニメーション、テーマ色反転、画面外削除を確認すること。猫の通過でSleeping Bodyが起床しないこと。
 - localStorage破損値でクラッシュせず、安全な初期値へ戻ること。
-- Settingsから日本語／英語を切り替えるとヘッダー・Privacyリンク・Shop・設定モーダルが即時更新され、再読み込み後も `pomotm_lang` から復元されること。
+- Settingsから日本語／英語を切り替えるとヘッダー・Shop・設定モーダル・Terms / Privacyリンクと法務本文が即時更新され、再読み込み後も `pomotm_lang` から復元されること。
+- Settings最下部のTerms/Privacyリンクが日英で切り替わり、各長文モーダルがスクロールでき、閉じた後もSettingsが表示されていること。
+- 未ログインで認証UIが自動表示されず、タイマーとゲームを制限なく利用できること。SettingsからAuth Modalを開閉できること。Firebase Googleログイン後に名前・メール・画像が表示されること。メール登録時に確認メールが届いて即時サインアウトされ、未確認ログインが拒否されること。再送が60秒間連打防止され、確認後のログインだけがSettingsへ反映されること。重複メール・不正入力・誤パスワード・ポップアップキャンセルが安全に処理されること。ログアウト後に `onAuthStateChanged()` 経由でゲスト表示へ戻ること。
 - ユーザー操作後の初回接地で通常／GiantのSEが1回だけ鳴り、大量同時接地で連打されないこと。UFO／Space Alien表示中だけループ音が鳴り、退場・タブ非表示・アンマウントで停止すること。

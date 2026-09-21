@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { Cat, Coffee, Disc3, FastForward, Pause, Pencil, Play, Repeat, RotateCcw, Settings, Sparkles, Store, Zap } from "lucide-react";
 import { PhysicsCanvas, type PhysicsCanvasHandle } from "@/components/PhysicsCanvas";
 import { AdContainer } from "@/components/AdContainer";
+import { AuthModal } from "@/components/AuthModal";
 import { RewardModal } from "@/components/RewardModal";
 import { SettingsModal } from "@/components/SettingsModal";
 import { ShopModal } from "@/components/ShopModal";
@@ -39,6 +39,7 @@ export default function Home() {
   const [unlockedItems, setUnlockedItems] = useState<UnlockedItems>(INITIAL_UNLOCKED_ITEMS);
   const [shopOpen, setShopOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
   const [language, setLanguage] = useState<Language>("ja");
   const [hydrated, setHydrated] = useState(false);
   const [altitude, setAltitude] = useState(0);
@@ -359,12 +360,6 @@ export default function Home() {
           <div className={`pointer-events-none absolute bottom-3 right-3 z-20 rounded-full border px-3 py-1.5 text-xs font-black tabular-nums backdrop-blur sm:bottom-5 sm:right-5 ${isBreak ? "border-neutral-300 bg-white/75 text-neutral-800" : "border-white/15 bg-neutral-950/60 text-white/80"}`}>
             {altitude.toLocaleString(language === "ja" ? "ja-JP" : "en-US")} m
           </div>
-          <Link
-            href="/privacy"
-            className={`pointer-events-auto absolute bottom-3 left-3 z-20 inline-flex items-center rounded-full border px-3 py-1.5 text-xs leading-4 backdrop-blur transition-colors sm:bottom-5 sm:left-5 ${isBreak ? "border-neutral-300 bg-white/75 text-neutral-600 hover:bg-white hover:text-neutral-900" : "border-white/15 bg-neutral-950/60 text-white/60 hover:bg-neutral-950/80 hover:text-white/90"}`}
-          >
-            {t.header.privacyPolicy}
-          </Link>
           <div data-control-toolbar className={`no-scrollbar absolute inset-x-3 top-3 z-30 flex min-w-0 max-w-full touch-pan-x items-center justify-start gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain rounded-full border p-1.5 backdrop-blur transition-colors duration-700 sm:inset-x-6 sm:top-5 sm:gap-2 sm:p-2 md:justify-between md:gap-3 ${isBreak ? "border-neutral-300 bg-white/75" : "border-neutral-800/80 bg-neutral-950/65"}`}>
             <div className="flex shrink-0 items-center gap-1 sm:gap-2">
               <button className={modeClass("focus")} aria-label={t.header.focus25Minutes} title={t.header.focus25Minutes} onClick={() => selectTimerMode("focus")}><Pencil size={17} />25m</button>
@@ -459,6 +454,13 @@ export default function Home() {
             language={language}
             onLanguageChange={changeLanguage}
             isBreak={isBreak}
+            onOpenAuth={() => setAuthOpen(true)}
+          />
+          <AuthModal
+            isOpen={authOpen}
+            onClose={() => setAuthOpen(false)}
+            isBreak={isBreak}
+            language={language}
           />
           <RewardModal
             rewardOpen={rewardOpen}
