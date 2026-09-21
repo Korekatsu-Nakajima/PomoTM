@@ -29,11 +29,23 @@ export const metadata: Metadata = {
   },
   manifest: "/manifest.webmanifest",
   icons: {
+    icon: [
+      {
+        url: "/icons/192icon.png",
+        sizes: "192x192",
+        type: "image/png",
+      },
+      {
+        url: "/icons/512icon.png",
+        sizes: "512x512",
+        type: "image/png",
+      },
+    ],
     apple: [
       {
-        url: "/icons/pomotm-192.svg",
-        sizes: "192x192",
-        type: "image/svg+xml",
+        url: "/icons/180icon.png",
+        sizes: "180x180",
+        type: "image/png",
       },
     ],
   },

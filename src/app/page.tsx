@@ -2,16 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Cat, Coffee, Disc3, FastForward, Pause, Pencil, Play, Repeat, RotateCcw, Sparkles, Store, Zap } from "lucide-react";
+import { Cat, Coffee, Disc3, FastForward, Pause, Pencil, Play, Repeat, RotateCcw, Settings, Sparkles, Store, Zap } from "lucide-react";
 import { PhysicsCanvas, type PhysicsCanvasHandle } from "@/components/PhysicsCanvas";
 import { AdContainer } from "@/components/AdContainer";
 import { RewardModal } from "@/components/RewardModal";
+import { SettingsModal } from "@/components/SettingsModal";
 import { ShopModal } from "@/components/ShopModal";
 import { useDebugMode } from "@/hooks/useDebugMode";
 import { useTimer } from "@/hooks/useTimer";
 import { saveLocalStorage, useGameStorage } from "@/hooks/useGameStorage";
 import { CONFIG, type TomatoCounts, type TimerMode } from "@/lib/config";
 import type { ActiveBuffs, BuffKey, BuffRemaining, ItemCounts, UnlockedItems } from "@/types/game";
+import { isLanguage, LANGUAGE_STORAGE_KEY, translations, type Language } from "@/utils/translations";
 import {
   BUFF_DURATION_SECONDS,
   BONUS_BREAK_GOLDEN_CHANCE,
@@ -35,6 +37,8 @@ export default function Home() {
   const [itemCounts, setItemCounts] = useState<ItemCounts>(INITIAL_ITEM_COUNTS);
   const [unlockedItems, setUnlockedItems] = useState<UnlockedItems>(INITIAL_UNLOCKED_ITEMS);
   const [shopOpen, setShopOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [language, setLanguage] = useState<Language>("ja");
   const [hydrated, setHydrated] = useState(false);
   const [altitude, setAltitude] = useState(0);
   const [maxAltitude, setMaxAltitude] = useState(0);
@@ -51,6 +55,7 @@ export default function Home() {
   const timerModeRef = useRef<TimerMode>("focus");
   const pendingItemRewardRef = useRef<BuffKey | null>(null);
   const itemRewardGrantedRef = useRef(false);
+  const t = translations[language];
   useGameStorage({
     setCounts,
     goldenTomatoes,
@@ -70,6 +75,25 @@ export default function Home() {
     totalGoldTomatoes,
     setTotalGoldTomatoes,
   });
+  useEffect(() => {
+    try {
+      const savedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+      if (isLanguage(savedLanguage)) setLanguage(savedLanguage);
+    } catch {
+      // localStorageが利用できない環境では既定の日本語を維持する。
+    }
+  }, []);
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+  const changeLanguage = useCallback((nextLanguage: Language) => {
+    setLanguage(nextLanguage);
+    try {
+      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
+    } catch {
+      // 保存できない環境でも、そのセッション中の表示切り替えは維持する。
+    }
+  }, []);
   const awardTomato = useCallback(() => {
     if (document.hidden) return;
     if (isDebugMode && debugUfoMode) return;
@@ -275,7 +299,7 @@ export default function Home() {
   }, [hydrated, timer.mode, timer.running]);
   const time = `${String(Math.floor(timer.remaining / 60)).padStart(2, "0")}:${String(timer.remaining % 60).padStart(2, "0")}`;
   const isBreak = timer.mode === "break";
-  useEffect(() => { document.title = `${time} · ${timer.mode === "focus" ? "集中" : "休憩"}`; }, [time, timer.mode]);
+  useEffect(() => { document.title = `${time} · ${timer.mode === "focus" ? t.timer.focus : t.timer.break}`; }, [t.timer.break, t.timer.focus, time, timer.mode]);
   const quietClass = isBreak
     ? `${button} bg-white/80 text-neutral-900 ring-1 ring-inset ring-neutral-300 hover:bg-white`
     : quiet;
@@ -312,29 +336,30 @@ export default function Home() {
             />
           </div>
           <div className={`pointer-events-none absolute bottom-3 right-3 z-20 rounded-full border px-3 py-1.5 text-xs font-black tabular-nums backdrop-blur sm:bottom-5 sm:right-5 ${isBreak ? "border-neutral-300 bg-white/75 text-neutral-800" : "border-white/15 bg-neutral-950/60 text-white/80"}`}>
-            {altitude.toLocaleString("ja-JP")} m
+            {altitude.toLocaleString(language === "ja" ? "ja-JP" : "en-US")} m
           </div>
           <Link
             href="/privacy"
             className={`pointer-events-auto absolute bottom-3 left-3 z-20 inline-flex items-center rounded-full border px-3 py-1.5 text-xs leading-4 backdrop-blur transition-colors sm:bottom-5 sm:left-5 ${isBreak ? "border-neutral-300 bg-white/75 text-neutral-600 hover:bg-white hover:text-neutral-900" : "border-white/15 bg-neutral-950/60 text-white/60 hover:bg-neutral-950/80 hover:text-white/90"}`}
           >
-            プライバシーポリシー
+            {t.header.privacyPolicy}
           </Link>
           <div data-control-toolbar className={`no-scrollbar absolute inset-x-3 top-3 z-30 flex min-w-0 max-w-full touch-pan-x items-center justify-start gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain rounded-full border p-1.5 backdrop-blur transition-colors duration-700 sm:inset-x-6 sm:top-5 sm:gap-2 sm:p-2 md:justify-between md:gap-3 ${isBreak ? "border-neutral-300 bg-white/75" : "border-neutral-800/80 bg-neutral-950/65"}`}>
             <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-              <button className={modeClass("focus")} aria-label="集中 25分" title="集中 25分" onClick={() => selectTimerMode("focus")}><Pencil size={17} />25m</button>
-              <button className={modeClass("break")} aria-label="休憩 5分" title="休憩 5分" onClick={() => selectTimerMode("break")}><Coffee size={17} />5m</button>
+              <button className={modeClass("focus")} aria-label={t.header.focus25Minutes} title={t.header.focus25Minutes} onClick={() => selectTimerMode("focus")}><Pencil size={17} />25m</button>
+              <button className={modeClass("break")} aria-label={t.header.break5Minutes} title={t.header.break5Minutes} onClick={() => selectTimerMode("break")}><Coffee size={17} />5m</button>
             </div>
             <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-              <button className={`${button} ${isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} aria-label="開始" title="開始" disabled={timer.running} onClick={resumeTomatoCycle}><Play size={18} fill="currentColor" /></button>
-              <button className={quietClass} aria-label="一時停止" title="一時停止" disabled={!timer.running} onClick={pauseTomatoCycle}><Pause size={18} /></button>
-              <button className={quietClass} aria-label="リセット" title="リセット" onClick={resetTimer}><RotateCcw size={18} /></button>
-              <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.autoLoopEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`自動切り替え ${timer.autoLoopEnabled ? "ON" : "OFF"}`} title="自動切り替え" aria-pressed={timer.autoLoopEnabled} onClick={timer.toggleAutoLoop}><Repeat size={18} /></button>
+              <button className={`${button} ${isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950"}`} aria-label={t.header.start} title={t.header.start} disabled={timer.running} onClick={resumeTomatoCycle}><Play size={18} fill="currentColor" /></button>
+              <button className={quietClass} aria-label={t.header.pause} title={t.header.pause} disabled={!timer.running} onClick={pauseTomatoCycle}><Pause size={18} /></button>
+              <button className={quietClass} aria-label={t.header.reset} title={t.header.reset} onClick={resetTimer}><RotateCcw size={18} /></button>
+              <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.autoLoopEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`${t.header.autoSwitch} ${timer.autoLoopEnabled ? t.header.on : t.header.off}`} title={t.header.autoSwitch} aria-pressed={timer.autoLoopEnabled} onClick={timer.toggleAutoLoop}><Repeat size={18} /></button>
               {isDebugMode && (
-                <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.debugEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`デバッグ ${timer.debugEnabled ? "ON" : "OFF"}`} title="デバッグ" aria-pressed={timer.debugEnabled} onClick={timer.toggleDebug}><Zap size={18} fill={timer.debugEnabled ? "currentColor" : "none"} /></button>
+                <button className={`${button} border ${isBreak ? "border-emerald-500/60" : "border-red-500/60"} ${timer.debugEnabled ? isBreak ? "bg-emerald-500 text-white" : "bg-red-500 text-neutral-950" : isBreak ? "bg-white/80 text-neutral-900" : "bg-neutral-900"}`} aria-label={`${t.header.debug} ${timer.debugEnabled ? t.header.on : t.header.off}`} title={t.header.debug} aria-pressed={timer.debugEnabled} onClick={timer.toggleDebug}><Zap size={18} fill={timer.debugEnabled ? "currentColor" : "none"} /></button>
               )}
-              <button className={quietClass} aria-label="ショップを開く" title="ショップ" onClick={() => setShopOpen(true)}><Store size={18} /></button>
-              <span className={`inline-flex items-center gap-1 rounded-full border border-amber-400/30 px-3 py-2 text-sm font-bold ${isBreak ? "bg-white/80 text-amber-700" : "bg-neutral-950/80 text-amber-300"}`} title="所持している金のトマト"><Sparkles size={16} />× {goldenTomatoes}</span>
+              <button className={quietClass} aria-label={t.header.openShop} title={t.header.shop} onClick={() => setShopOpen(true)}><Store size={18} /></button>
+              <button className={quietClass} aria-label={t.header.openSettings} title={t.header.settings} onClick={() => setSettingsOpen(true)}><Settings size={18} /></button>
+              <span className={`inline-flex items-center gap-1 rounded-full border border-amber-400/30 px-3 py-2 text-sm font-bold ${isBreak ? "bg-white/80 text-amber-700" : "bg-neutral-950/80 text-amber-300"}`} title={t.header.goldTomatoes}><Sparkles size={16} />× {goldenTomatoes}</span>
               {isDebugMode && (
                 <button
                   className={`${button} border ${debugUfoMode
@@ -344,8 +369,8 @@ export default function Home() {
                     : isBreak
                       ? "border-neutral-300 bg-white/80 text-neutral-700"
                       : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
-                  aria-label={`UFOデバッグモード ${debugUfoMode ? "ON" : "OFF"}`}
-                  title="UFOデバッグモード"
+                  aria-label={`${t.header.ufoDebugMode} ${debugUfoMode ? t.header.on : t.header.off}`}
+                  title={t.header.ufoDebugMode}
                   aria-pressed={debugUfoMode}
                   onClick={() => {
                     const next = !debugUfoMode;
@@ -365,8 +390,8 @@ export default function Home() {
                     : isBreak
                       ? "border-neutral-300 bg-white/80 text-neutral-700"
                       : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
-                  aria-label={`猫デバッグモード ${debugCatMode ? "ON" : "OFF"}`}
-                  title="猫デバッグモード"
+                  aria-label={`${t.header.catDebugMode} ${debugCatMode ? t.header.on : t.header.off}`}
+                  title={t.header.catDebugMode}
                   aria-pressed={debugCatMode}
                   onClick={() => {
                     const next = !debugCatMode;
@@ -380,8 +405,8 @@ export default function Home() {
               {isDebugMode && (
                 <button
                   className={`${button} border ${isBreak ? "border-violet-400/50 bg-violet-100 text-violet-700" : "border-violet-400/40 bg-violet-400/10 text-violet-300"}`}
-                  aria-label="残り時間を10秒に短縮"
-                  title="残り10秒にする"
+                  aria-label={t.header.shortenToTenSeconds}
+                  title={t.header.setTenSeconds}
                   onClick={() => timer.setRemainingSeconds(10)}
                 >
                   <FastForward aria-hidden="true" size={18} />
@@ -404,6 +429,14 @@ export default function Home() {
             onUseItem={useBuffItem}
             onUnlockUfo={unlockUfo}
             onUnlockOctopus={unlockOctopus}
+            isBreak={isBreak}
+            language={language}
+          />
+          <SettingsModal
+            isOpen={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            language={language}
+            onLanguageChange={changeLanguage}
             isBreak={isBreak}
           />
           <RewardModal

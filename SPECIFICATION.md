@@ -269,7 +269,9 @@
 ### 1.14 PWA・インストール誘導
 
 - `/manifest.webmanifest` はMetadata Routeの `src/app/manifest.ts` から生成する。アプリ名は「PomoTM - トマトポモドーロタイマー」、表示モードは `standalone`、背景色とテーマ色は `#0f172a`。
-- Manifestは192px／512pxのPomoTMトマトSVGアイコンを参照する。アイコン実体は `public/icons` に置き、Manifestから参照するパスを欠損させない。
+- 公式アイコンの原本は `assets/icon/180icon.png`、`assets/icon/192icon.png`、`assets/icon/512icon.png`。配信用コピーは同名で `public/icons/` に置く。
+- ManifestはPNGの192px／512pxアイコンを `/icons/192icon.png` と `/icons/512icon.png` から参照する。Root Layoutの通常アイコンも同じ192px／512pxを使用し、Apple Touch Iconには `/icons/180icon.png` を使用する。
+- 旧 `pomotm-192.svg` / `pomotm-512.svg` とその参照は保持しない。アイコン差替え時は原本・配信用コピー・Metadata・Manifestを同時に更新する。
 - Root LayoutはViewport Metadataで `themeColor: #0f172a` と `viewportFit: cover` を設定し、Apple Web Appのcapable、black-translucent status bar、タイトルを設定する。
 - `PWAInstallPrompt` は `beforeinstallprompt` が発火し、スタンドアロン起動ではなく、7日間の非表示期間中でもない場合だけ表示する。インストール操作では保存したイベントの `prompt()` を呼び、`appinstalled` 後は閉じる。
 - 「後で」または閉じる操作はlocalStorageの `pomotm:pwa-install-dismissed-until` に7日後の期限を保存する。localStorageが使用不能でもクラッシュさせない。
@@ -289,6 +291,7 @@
   - 上部ツールバー: `z-30`。
   - Shop Modal: `z-50`。
   - Reward Modal: `z-[60]`。
+  - Settings Modal: `z-[70]`。
   - Privacyリンク: 標高バッジと同じゲームカード内の `z-20`。
 - Canvasの親とCanvas自身に `min-w-0` / `max-w-full` / `overflow-hidden` を適用し、リサイズ時にカード外へ出さない。
 
@@ -307,7 +310,7 @@
 - `.no-scrollbar` によりFirefox、旧Edge/IE系、WebKitのスクロールバーを非表示にする。
 - ボタンは `shrink-0`。モバイルは小さなpadding・gap・text-xs、sm以上で通常サイズへ戻す。
 - 左グループ: Pencil 25m、Coffee 5m。
-- 右グループ: Play、Pause、Reset、Repeat、Shop、Gold所持数。統合デバッグモード時のみZap、UFOデバッグ、猫デバッグ、10sを追加表示する。
+- 右グループ: Play、Pause、Reset、Repeat、Shop、Settings、Gold所持数。統合デバッグモード時のみZap、UFOデバッグ、猫デバッグ、10sを追加表示する。
 - インタラクティブUIはCanvasより前面で、Canvasはポインターイベントを受け取らない。
 
 ### 2.4 広告枠
@@ -350,6 +353,15 @@
 - Shopカードは最大lg。上部ステータス列にはUFO解放・Octopus解放だけを同一ラインで表示し、その下に3種アイテムの所持数・使用操作・バフ残り時間を表示する。Shop内では所持Goldバッジを表示しない。消費アイテム発動中は使用ボタン自体が `MM:SS` 表示となり、追加の時間行やOctopus大型カードは持たない。
 - RewardはShopより前の `z-[60]`、最大md。疑似動画中は5秒カウントを表示し、その後またはスキップ直後に同じトーンの2段階宝箱モーダルへ遷移する。
 - Break時はアプリ、カード、ボタン、モーダル、Canvas背景を明るいテーマへ遷移する。既存実装には休憩アクセントとしてemerald色が存在する。
+
+### 2.9 言語設定 / Settings Modal
+
+- ヘッダーツールバーのLucide `Settings` 歯車ボタンから設定モーダルを開く。
+- 設定モーダルでは `日本語`（`ja`）と `English`（`en`）をラジオボタンで選択し、選択直後にヘッダー、ページタイトル、Privacyリンク、Shop、設定モーダルの表示文言を切り替える。
+- 言語Stateは `page.tsx` が所有し、`src/utils/translations.ts` の辞書を参照する。Shopは `language` Propsを受け取り、購入・使用・アンロック処理を変更せず表示文言だけを切り替える。
+- 選択言語はlocalStorageキー `pomotm_lang` に `ja` または `en` として保存する。不明値、破損値、localStorage利用不能時は日本語を安全な既定値とする。
+- 言語変更時はルート要素の `lang` 属性も同じ値へ同期する。
+- Settings Modalはカード全体を覆う `z-[70]`。背景クリックまたは閉じるボタンで閉じ、Focus/Breakテーマを継承する。
 
 ## 3. 現在のデバッグ機能・制御仕様
 
@@ -440,6 +452,7 @@
 | `src/app/globals.css` | Tailwind読込、全画面overflow制御、button cursor、no-scrollbar |
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |
 | `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI |
+| `src/components/SettingsModal.tsx` | 日本語／英語の選択UI、Focus/Breakテーマ対応、設定モーダル表示 |
 | `src/components/RewardModal.tsx` | 疑似リワード動画UI、開封前の宝箱タップ演出、開封後の獲得アイテム詳細UI |
 | `src/components/PWAInstallPrompt.tsx` | beforeinstallprompt保持、スタンドアロン判定、7日間の再表示抑制、インストール誘導UI |
 | `src/components/AdContainer.tsx` | Desktop/Mobile広告プレースホルダー、30秒refresh state |
@@ -448,6 +461,7 @@
 | `src/utils/physicsSafety.ts` | めり込み30%補正、有限数検査、速度30超から25へのクランプ |
 | `src/utils/terrainUtils.ts` | 中央Core範囲、可視Body抽出、Compound Terrainパーツ生成 |
 | `src/utils/gameUtils.ts` | clamp、smoothStep、色補間、空色、診断種別、バフ時間整形 |
+| `src/utils/translations.ts` | `ja` / `en` の対訳辞書、言語型、`pomotm_lang` 保存キー、保存値検証 |
 | `src/lib/config.ts` | タイマー時間、供給間隔、基本World寸法などのアプリ設定 |
 | `next.config.ts` | 開発オリジン許可 |
 
@@ -466,6 +480,8 @@ page.tsx
 ├─ ShopModal
 │  ├─ 消費型アイテム使用時に所持数を1減らして30分バフを開始
 │  └─ 永久解放購入時のみ PhysicsCanvas.removeGolden(count)
+├─ SettingsModal
+│  └─ 言語選択 ──> page.tsxのlanguage State更新 ──> pomotm_lang保存・UI即時更新
 ├─ RewardModal
 │  └─ 動画選択 ──> 宝箱表示 ──> アイテム詳細表示 ──> 休憩タイマー再開
 └─ AdContainer (mobile / desktop)
@@ -504,3 +520,4 @@ page.tsx
 - Deep Coreの中央限定Static化、側面Dynamic、Terrain吸収の絶対Y基準を確認すること。
 - 猫の通常1/1,000・デバッグ1/100抽選、90ms運搬／落下アニメーション、125ms走行アニメーション、テーマ色反転、画面外削除を確認すること。猫の通過でSleeping Bodyが起床しないこと。
 - localStorage破損値でクラッシュせず、安全な初期値へ戻ること。
+- Settingsから日本語／英語を切り替えるとヘッダー・Privacyリンク・Shop・設定モーダルが即時更新され、再読み込み後も `pomotm_lang` から復元されること。
