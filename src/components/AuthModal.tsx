@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { FirebaseError } from "firebase/app";
 import {
   createUserWithEmailAndPassword,
+  reload,
   sendEmailVerification,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
   updateProfile,
 } from "firebase/auth";
-import { LockKeyhole, Mail, UserPlus, UserRound, X } from "lucide-react";
+import { Eye, EyeOff, LockKeyhole, Mail, UserPlus, UserRound, X } from "lucide-react";
 import { auth, googleProvider } from "@/lib/firebase";
 import type { Language } from "@/utils/translations";
 
@@ -22,6 +23,8 @@ type AuthModalProps = {
   isBreak: boolean;
   language: Language;
 };
+
+const SIGN_UP_PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,30}$/;
 
 const copy = {
   ja: {
@@ -37,6 +40,9 @@ const copy = {
     close: "後で / 閉じる",
     closeLabel: "認証画面を閉じる",
     passwordHint: "8文字以上で入力してください。",
+    passwordRequirements: "8〜30文字で、英大文字・英小文字・数字をそれぞれ1文字以上含めてください。",
+    showPassword: "パスワードを表示",
+    hidePassword: "パスワードを隠す",
     required: "メールアドレスと8文字以上のパスワードを入力してください。",
     nameRequired: "表示名を1〜80文字で入力してください。",
     invalidCredentials: "メールアドレスまたはパスワードが正しくありません。",
@@ -66,6 +72,9 @@ const copy = {
     close: "Not now / Close",
     closeLabel: "Close authentication",
     passwordHint: "Use at least 8 characters.",
+    passwordRequirements: "Use 8–30 characters with at least one uppercase letter, one lowercase letter, and one number.",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
     required: "Enter a valid email address and a password of at least 8 characters.",
     nameRequired: "Enter a display name between 1 and 80 characters.",
     invalidCredentials: "The email address or password is incorrect.",
@@ -89,12 +98,19 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
   const [showVerificationResend, setShowVerificationResend] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [awaitingVerificationInSession, setAwaitingVerificationInSession] = useState(false);
+  const onCloseRef = useRef(onClose);
   const t = copy[language];
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -103,8 +119,10 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
     setVerificationMessage(null);
     setShowVerificationResend(false);
     setResendCooldown(0);
+    setAwaitingVerificationInSession(false);
     setName("");
     setPassword("");
+    setShowPassword(false);
   }, [isOpen]);
 
   useEffect(() => {
@@ -114,6 +132,52 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
     }, 1000);
     return () => window.clearTimeout(timeoutId);
   }, [resendCooldown]);
+
+  useEffect(() => {
+    if (!isOpen || !awaitingVerificationInSession) return;
+
+    let disposed = false;
+    let refreshInProgress = false;
+
+    const refreshVerificationState = async () => {
+      if (refreshInProgress) return;
+      const currentUser = auth.currentUser;
+      const usesPasswordProvider = currentUser?.providerData.some(
+        (provider) => provider.providerId === "password",
+      );
+      if (!currentUser || !usesPasswordProvider) return;
+
+      refreshInProgress = true;
+      try {
+        await reload(currentUser);
+        if (!disposed && currentUser.emailVerified) {
+          setAwaitingVerificationInSession(false);
+          setShowVerificationResend(false);
+          onCloseRef.current();
+        }
+      } catch {
+        // A transient refresh failure must not replace the existing auth UI state.
+      } finally {
+        refreshInProgress = false;
+      }
+    };
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshVerificationState();
+    };
+
+    const intervalId = window.setInterval(() => void refreshVerificationState(), 5000);
+    window.addEventListener("focus", refreshVerificationState);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    void refreshVerificationState();
+
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVerificationState);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [awaitingVerificationInSession, isOpen]);
 
   if (!isOpen) return null;
 
@@ -160,7 +224,15 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
     event.preventDefault();
     if (pending) return;
     const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail.includes("@") || password.length < 8) {
+    if (!normalizedEmail.includes("@") || password.length === 0) {
+      setError(t.required);
+      return;
+    }
+    if (mode === "signUp" && !SIGN_UP_PASSWORD_PATTERN.test(password)) {
+      setError(t.passwordRequirements);
+      return;
+    }
+    if (mode === "signIn" && password.length < 8) {
       setError(t.required);
       return;
     }
@@ -174,23 +246,31 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
     setVerificationMessage(null);
     try {
       if (mode === "signUp") {
-        let accountCreated = false;
+        let createdUserId: string | null = null;
         try {
           const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
-          accountCreated = true;
+          createdUserId = credential.user.uid;
           setShowVerificationResend(true);
           setVerificationMessage(t.emailNotVerified);
           await updateProfile(credential.user, { displayName: normalizedName });
-          await sendEmailVerification(credential.user);
+          await sendEmailVerification(credential.user, {
+            url: window.location.origin,
+            handleCodeInApp: false,
+          });
           setMode("signIn");
           setResendCooldown(60);
+          setAwaitingVerificationInSession(true);
           setVerificationMessage(t.verificationSent);
-        } finally {
-          if (accountCreated) await signOut(auth).catch(() => undefined);
+        } catch (reason) {
+          if (createdUserId && auth.currentUser?.uid === createdUserId) {
+            await signOut(auth).catch(() => undefined);
+          }
+          throw reason;
         }
       } else {
         const credential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
         if (!credential.user.emailVerified) {
+          setAwaitingVerificationInSession(false);
           setShowVerificationResend(true);
           setVerificationMessage(t.emailNotVerified);
           await signOut(auth);
@@ -215,17 +295,32 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
     setPending(true);
     setError(null);
     try {
-      const credential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-      if (credential.user.emailVerified) {
+      let verificationUser = auth.currentUser;
+      let shouldSignOutAfterResend = false;
+      if (verificationUser?.email?.toLowerCase() !== normalizedEmail) {
+        const credential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+        verificationUser = credential.user;
+        shouldSignOutAfterResend = true;
+      }
+      if (!verificationUser) {
+        setError(t.genericError);
+        return;
+      }
+      await reload(verificationUser);
+      if (verificationUser.emailVerified) {
         onClose();
         return;
       }
       try {
-        await sendEmailVerification(credential.user);
+        await sendEmailVerification(verificationUser, {
+          url: window.location.origin,
+          handleCodeInApp: false,
+        });
         setVerificationMessage(t.verificationSent);
         setResendCooldown(60);
+        setAwaitingVerificationInSession(!shouldSignOutAfterResend);
       } finally {
-        await signOut(auth).catch(() => undefined);
+        if (shouldSignOutAfterResend) await signOut(auth).catch(() => undefined);
       }
     } catch (reason) {
       setError(getAuthenticationError(reason));
@@ -321,7 +416,9 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
                     setVerificationMessage(null);
                     setShowVerificationResend(false);
                     setResendCooldown(0);
+                    setAwaitingVerificationInSession(false);
                     setPassword("");
+                    setShowPassword(false);
                   }}
                 >
                   {option === "signIn" ? t.signIn : t.signUp}
@@ -358,16 +455,32 @@ export function AuthModal({ isOpen, onClose, isBreak, language }: AuthModalProps
           </label>
           <label className="grid gap-1.5 text-sm font-bold">
             <span className="flex items-center gap-2"><LockKeyhole size={16} />{t.password}</span>
-            <input
-              className={`rounded-2xl border px-4 py-3 text-base outline-none transition ${inputClass}`}
-              type="password"
-              minLength={8}
-              autoComplete={mode === "signIn" ? "current-password" : "new-password"}
-              value={password}
-              disabled={pending}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-            <span className="text-xs font-normal text-neutral-500">{t.passwordHint}</span>
+            <div className="relative">
+              <input
+                className={`w-full rounded-2xl border py-3 pl-4 pr-12 text-base outline-none transition ${inputClass}`}
+                type={showPassword ? "text" : "password"}
+                minLength={8}
+                maxLength={mode === "signUp" ? 30 : undefined}
+                autoComplete={mode === "signIn" ? "current-password" : "new-password"}
+                value={password}
+                disabled={pending}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                type="button"
+                className={`absolute right-3 top-1/2 inline-flex -translate-y-1/2 items-center justify-center rounded-full p-1.5 transition disabled:cursor-not-allowed disabled:opacity-50 ${isBreak ? "text-neutral-500 hover:bg-neutral-200 hover:text-neutral-800" : "text-neutral-400 hover:bg-neutral-800 hover:text-white"}`}
+                aria-label={showPassword ? t.hidePassword : t.showPassword}
+                title={showPassword ? t.hidePassword : t.showPassword}
+                aria-pressed={showPassword}
+                disabled={pending}
+                onClick={() => setShowPassword((current) => !current)}
+              >
+                {showPassword ? <EyeOff size={19} /> : <Eye size={19} />}
+              </button>
+            </div>
+            <span className="text-xs font-normal text-neutral-500">
+              {mode === "signUp" ? t.passwordRequirements : t.passwordHint}
+            </span>
           </label>
 
           {error && (

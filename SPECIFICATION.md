@@ -401,7 +401,10 @@
 - `AuthModal` は設定画面の上に `z-[80]` で重なり、Firebase AuthenticationによるGoogleポップアップ認証、メール／パスワードのログイン・新規登録タブ、後で閉じる操作を提供する。閉じた場合は元の設定画面へ戻る。
 - Googleログインは `signInWithPopup(auth, googleProvider)` を使用する。ページ遷移や独自 `/api/auth` Routeを使用せず、成功時はFirebaseの認証Stateへ即時反映してモーダルを閉じる。
 - メールログインは `signInWithEmailAndPassword()`、新規登録は `createUserWithEmailAndPassword()` を使用する。登録直後に `updateProfile()` で1〜80文字の表示名を保存する。
-- メール新規登録後は `sendEmailVerification()` で確認メールを送り、案内を表示して即座に `signOut(auth)` する。確認リンクを開くまでログイン済みUIへ遷移させない。
+- メール新規登録のパスワードは8〜30文字とし、英大文字・英小文字・数字を各1文字以上必須とする。Firebaseへ送信する前にクライアントで検証し、不適合時は日英の案内を表示する。ログイン時の既存パスワード条件は変更しない。
+- パスワード入力欄にはLucideの `Eye` / `EyeOff` による表示切替を設ける。初期値は非表示で、表示状態やパスワード値をlocalStorage、sessionStorage、Cookieへ保存しない。
+- メール新規登録後は `sendEmailVerification()` で確認メールを送り、確認後の戻り先を現在のアプリoriginに指定する。登録直後のFirebaseセッションは維持するが、確認リンクを開くまではpassword providerの未確認ユーザーをログイン済みUIへ表示しない。
+- 認証待機中はアプリのフォーカス復帰、表示復帰および低頻度の確認処理で `reload(user)` を実行する。`emailVerified` がtrueになった時点で既存の `onAuthStateChanged()` と同期し、追加のログイン操作なしで認証モーダルを閉じる。
 - メールログイン成功後も `user.emailVerified` を検査し、未確認なら案内と再送ボタンを表示して即座にサインアウトする。再送時は入力済み資格情報で一時的に再認証し、メール送信後に再びサインアウトする。
 - 確認メール再送は成功後60秒間無効化し、残り秒数をボタン内に表示する。Googleポップアップ認証はメール確認判定の対象外とする。
 - Settings Modalは `onAuthStateChanged()` を購読し、Firebase `User` の表示名・メール・プロフィール画像を描画する。password providerの未確認ユーザーは表示対象から除外し、ログアウトは `signOut(auth)` を実行する。
@@ -589,9 +592,9 @@ page.tsx
 - Firebase Web App設定は `NEXT_PUBLIC_FIREBASE_API_KEY`、`NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`、`NEXT_PUBLIC_FIREBASE_PROJECT_ID`、`NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`、`NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`、`NEXT_PUBLIC_FIREBASE_APP_ID` から読み込む。Analyticsを将来有効化する場合だけ `NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` を設定する。
 - `src/lib/firebase.ts` はFirebase Appを重複初期化せず、既存Appがあれば再利用する。`auth` と選択画面を毎回表示する `googleProvider` を共有exportする。
 - Google認証は `signInWithPopup()`、メールログインは `signInWithEmailAndPassword()`、新規登録は `createUserWithEmailAndPassword()` を使用する。新規登録後は `updateProfile()` で表示名を設定する。
-- メール新規登録後は `sendEmailVerification()` を実行し、成功・失敗にかかわらず作成直後のセッションを `signOut(auth)` で終了する。メールログイン後は `emailVerified` がtrueの場合だけモーダルを閉じる。
-- 未確認ユーザーの再送操作はメール／パスワードで一時再認証し、`sendEmailVerification()` 後に必ずサインアウトする。成功後60秒のcooldown中は再送ボタンを無効化する。
-- Settings Modalは `onAuthStateChanged()` のunsubscribe関数をEffect cleanupとして返し、認証状態をFirebase `User` から直接描画する。password providerかつ未確認のUserはログイン済み表示から除外する。ログアウトは `signOut(auth)` を使用する。
+- メール新規登録後は `sendEmailVerification()` を実行し、送信成功時は作成直後のセッションを維持する。送信失敗時だけ安全のためサインアウトする。メールログイン後は `emailVerified` がtrueの場合だけモーダルを閉じる。
+- 未確認ユーザーの再送操作は、登録直後の同一セッションが残っていればそのUserを使用する。セッションがない場合だけメール／パスワードで一時再認証し、`sendEmailVerification()` 後にサインアウトする。成功後60秒のcooldown中は再送ボタンを無効化する。
+- Settings Modalは既存の `onAuthStateChanged()` 購読を一つだけ維持し、フォーカス・表示復帰時に未確認password userを `reload()` して最新状態へ同期する。Effect cleanupで購読とDOMイベントを解除し、未確認Userはログイン済み表示から除外する。ログアウトは `signOut(auth)` を使用する。
 - 認証モーダルは設定画面から明示的に開いた場合だけ表示する。未ログイン時に自動表示せず、ゲストはタイマー・物理・ゲーム機能を制限なく利用できる。
 - Firebase ConsoleではGoogleとメール／パスワードのSign-in providerを有効化し、ローカルおよび本番のホスト名をAuthorized domainsへ登録する。
 - `schema.sql` とD1の既存ユーザー関連テーブルは将来のゲームデータ同期・課金連携用の設計として残るが、ブラウザ認証やパスワード検証には使用しない。
@@ -616,5 +619,5 @@ page.tsx
 - localStorage破損値でクラッシュせず、安全な初期値へ戻ること。
 - Settingsから日本語／英語を切り替えるとヘッダー・Shop・設定モーダル・Terms / Privacyリンクと法務本文が即時更新され、再読み込み後も `pomotm_lang` から復元されること。
 - Settings最下部のTerms/Privacyリンクが日英で切り替わり、各長文モーダルがスクロールでき、閉じた後もSettingsが表示されていること。
-- 未ログインで認証UIが自動表示されず、タイマーとゲームを制限なく利用できること。SettingsからAuth Modalを開閉できること。Firebase Googleログイン後に名前・メール・画像が表示されること。メール登録時に確認メールが届いて即時サインアウトされ、未確認ログインが拒否されること。再送が60秒間連打防止され、確認後のログインだけがSettingsへ反映されること。重複メール・不正入力・誤パスワード・ポップアップキャンセルが安全に処理されること。ログアウト後に `onAuthStateChanged()` 経由でゲスト表示へ戻ること。
+- 未ログインで認証UIが自動表示されず、タイマーとゲームを制限なく利用できること。SettingsからAuth Modalを開閉できること。Firebase Googleログイン後に名前・メール・画像が表示されること。メール登録では8〜30文字・英大文字・英小文字・数字を満たすパスワードだけがFirebaseへ送信されること。目アイコンで表示を切り替えられること。確認メール送信後も未確認ユーザーはログイン済み表示から除外され、確認リンク完了後は追加ログインなしでSettingsへ反映されること。再送が60秒間連打防止されること。重複メール・不正入力・誤パスワード・ポップアップキャンセルが安全に処理されること。ログアウト後に `onAuthStateChanged()` 経由でゲスト表示へ戻ること。
 - ユーザー操作後の初回接地で通常／GiantのSEが1回だけ鳴り、大量同時接地で連打されないこと。UFO／Space Alien表示中だけループ音が鳴り、退場・タブ非表示・アンマウントで停止すること。

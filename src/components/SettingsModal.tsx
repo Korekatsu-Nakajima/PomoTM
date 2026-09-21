@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { onAuthStateChanged, reload, signOut, type User } from "firebase/auth";
 import { Languages, LogIn, LogOut, Settings, UserRound, X } from "lucide-react";
 import { PrivacyModal } from "@/components/PrivacyModal";
 import { TermsModal } from "@/components/TermsModal";
@@ -65,10 +65,44 @@ export function SettingsModal({
   const [termsOpen, setTermsOpen] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
 
-  useEffect(
-    () => onAuthStateChanged(auth, (nextUser) => setUser(getVerifiedDisplayUser(nextUser))),
-    [],
-  );
+  useEffect(() => {
+    let disposed = false;
+    let syncVersion = 0;
+
+    const syncUser = async (nextUser: User | null) => {
+      const version = ++syncVersion;
+      if (nextUser) {
+        const usesPasswordProvider = nextUser.providerData.some(
+          (provider) => provider.providerId === "password",
+        );
+        if (usesPasswordProvider && !nextUser.emailVerified) {
+          await reload(nextUser).catch(() => undefined);
+        }
+      }
+      const currentUser = auth.currentUser;
+      const sameCurrentUser = currentUser?.uid === nextUser?.uid
+        || (!currentUser && !nextUser);
+      if (!disposed && version === syncVersion && sameCurrentUser) {
+        setUser(getVerifiedDisplayUser(nextUser));
+      }
+    };
+
+    const unsubscribe = onAuthStateChanged(auth, (nextUser) => void syncUser(nextUser));
+    const syncCurrentUser = () => void syncUser(auth.currentUser);
+    const syncCurrentUserWhenVisible = () => {
+      if (document.visibilityState === "visible") syncCurrentUser();
+    };
+
+    window.addEventListener("focus", syncCurrentUser);
+    document.addEventListener("visibilitychange", syncCurrentUserWhenVisible);
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+      window.removeEventListener("focus", syncCurrentUser);
+      document.removeEventListener("visibilitychange", syncCurrentUserWhenVisible);
+    };
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
