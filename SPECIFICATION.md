@@ -393,8 +393,11 @@
 - ヘッダーツールバーのLucide `Settings` 歯車ボタンから設定モーダルを開く。
 - 設定モーダルでは `日本語`（`ja`）と `English`（`en`）をラジオボタンで選択し、選択直後にヘッダー、ページタイトル、Shop、Settings内のTerms / Privacyリンクと法務本文を切り替える。
 - 言語Stateは `page.tsx` が所有し、`src/utils/translations.ts` の辞書を参照する。Shopは `language` Propsを受け取り、購入・使用・アンロック処理を変更せず表示文言だけを切り替える。
-- 選択言語はlocalStorageキー `pomotm_lang` に `ja` または `en` として保存する。不明値、破損値、localStorage利用不能時は日本語を安全な既定値とする。
+- 初期言語はClient Effect内で決定し、SSR / static prerenderの初期Stateは `ja` に固定してhydration mismatchを防ぐ。ブラウザ実行前に `window`、`navigator`、`localStorage` を参照しない。
+- 選択言語はlocalStorageキー `pomotm_lang` に `ja` または `en` として保存し、保存済みの有効値をブラウザ言語より必ず優先する。
+- 保存値がない、破損している、またはlocalStorageが利用不能な場合は、`navigator.languages` と `navigator.language` から最初の `ja` / `en` 系言語を採用する。`ja` 系は日本語、`en` 系は英語、対応言語が見つからない第三言語は英語、ブラウザ言語自体を取得できない場合は日本語へフォールバックする。
 - 言語変更時はルート要素の `lang` 属性も同じ値へ同期する。
+- ブラウザタイトルは既存のタイマータイトルEffectにより、現在言語のFocus / Break表記へ同期する。言語自動判定のためにタイマー計算やdeadlineを変更しない。
 - SettingsにはLucide `Volume2` / `VolumeX` を使う「音量 / Sound」スイッチを配置し、ON/OFFを即時に `page.tsx` のState、PhysicsCanvasのRefへ同期する。Matter effectの依存配列は変更しない。
 - Settings Modalはカード全体を覆う `z-[70]`。背景クリックまたは閉じるボタンで閉じ、Focus/Breakテーマを継承する。
 - Settings Modal最下部には、抑えたグレーの小文字で「利用規約 | プライバシーポリシー」または英語表記を横並びに表示する。各リンクはページ遷移せず、Settingsより前面のスクロール可能な法務モーダルを開く。

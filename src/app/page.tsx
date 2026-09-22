@@ -29,6 +29,28 @@ const INITIAL_ITEM_COUNTS: ItemCounts = { doubleDrop: 0, balloonBoost: 0, goldBo
 const DEFAULT_PREMIUM_ACCESS = true;
 const SOUND_ENABLED_STORAGE_KEY = "pomotm_sound_enabled";
 
+function detectBrowserLanguage(): Language {
+  if (typeof navigator === "undefined") return "ja";
+
+  try {
+    const browserLanguages = Array.isArray(navigator.languages) ? navigator.languages : [];
+    const candidates = [...browserLanguages, navigator.language].filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    if (candidates.length === 0) return "ja";
+
+    const supportedLanguage = candidates.find((value) => {
+      const primaryLanguage = value.toLowerCase().split("-")[0];
+      return primaryLanguage === "ja" || primaryLanguage === "en";
+    });
+    if (!supportedLanguage) return "en";
+
+    return supportedLanguage.toLowerCase().split("-")[0] === "ja" ? "ja" : "en";
+  } catch {
+    return "ja";
+  }
+}
+
 export default function Home() {
   const isDebugMode = useDebugMode();
   const physics = useRef<PhysicsCanvasHandle>(null);
@@ -84,10 +106,14 @@ export default function Home() {
   useEffect(() => {
     try {
       const savedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-      if (isLanguage(savedLanguage)) setLanguage(savedLanguage);
+      if (isLanguage(savedLanguage)) {
+        setLanguage(savedLanguage);
+        return;
+      }
     } catch {
-      // localStorageが利用できない環境では既定の日本語を維持する。
+      // localStorageが利用できない場合もブラウザ言語の判定を続行する。
     }
+    setLanguage(detectBrowserLanguage());
   }, []);
   useEffect(() => {
     try {
