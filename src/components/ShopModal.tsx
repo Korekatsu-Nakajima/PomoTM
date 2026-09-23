@@ -1,6 +1,7 @@
 "use client";
 
 import { Cloud, CopyPlus, Disc3, Radio, Rocket, Sparkles, Store, X } from "lucide-react";
+import { PremiumPlanCard } from "@/components/PremiumPlanCard";
 import type { ShopItemProps, ShopModalProps } from "@/types/game";
 import { formatBuffTime } from "@/utils/gameUtils";
 import { translations, type Language } from "@/utils/translations";
@@ -36,7 +37,7 @@ export function ShopModal({
 
   return (
     <div className={`absolute inset-0 z-50 grid place-items-center p-4 backdrop-blur-sm ${isBreak ? "bg-neutral-200/75" : "bg-neutral-950/75"}`} role="presentation" onMouseDown={onClose}>
-      <section className={`w-full max-w-lg rounded-3xl border p-6 shadow-2xl ${isBreak ? "border-neutral-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900"}`} role="dialog" aria-modal="true" aria-labelledby="shop-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section className={`max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-3xl border p-6 shadow-2xl ${isBreak ? "border-neutral-300 bg-white text-neutral-950" : "border-neutral-700 bg-neutral-900"}`} role="dialog" aria-modal="true" aria-labelledby="shop-title" onMouseDown={(event) => event.stopPropagation()}>
         <header className="mb-6 flex items-center justify-between gap-4">
           <div>
             <h2 id="shop-title" className="flex items-center gap-2 text-xl font-black"><Store className={isBreak ? "text-emerald-500" : "text-red-500"} />{t.shop.title}</h2>
@@ -74,6 +75,7 @@ export function ShopModal({
           <ShopItem title={t.shop.goldBoost} description={t.shop.goldBoostDescription} icon={<Sparkles size={16} />} count={itemCounts.goldBoost} active={activeBuffs.goldBoost} remainingSeconds={buffRemaining.goldBoost} onActivate={() => onUseItem("goldBoost")} light={isBreak} labels={t.shop} />
         </div>
         <p className={`mt-4 text-xs opacity-75 ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>{t.shop.breakNote}</p>
+        <PremiumPlanCard isBreak={isBreak} language={language} />
       </section>
     </div>
   );

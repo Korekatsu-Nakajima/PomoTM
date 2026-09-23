@@ -5,11 +5,11 @@
 ## 1. 現在の構成と通信境界
 
 - 本番配備はNext.js static exportで生成した `out` をCloudflare Assetsから配信する。正規設定は `wrangler.json`、Worker名は `pomo-tm` である。
-- 現在の `src/app` に独自 `/api/*` Route Handler、Server Actions、Cloudflare Worker APIは存在しない。
-- クライアント実行コードはD1 binding、`getCloudflareContext()`、D1クエリを使用しない。`schema.sql` と `src/types/db.ts` は将来設計であり、本番D1接続を意味しない。
+- `src/app` に独自 `/api/*` Route HandlerやServer Actionsを追加せず、static exportを維持する。Stripe処理だけを別Worker `pomo-tm-stripe-api`へ分離する。
+- クライアント実行コードはD1 binding、`getCloudflareContext()`、D1クエリを使用しない。Stripe専用WorkerだけがCloudflare Dashboardで設定されたD1 binding `DB`へ接続する。
 - 認証通信はFirebase Web SDKによるFirebase Authenticationへの直接通信である。Google popup、メール／パスワードログイン、登録、確認メール送信、ユーザー再読込を利用する。
-- Firebase以外の外部通信は、共通layoutから読み込むGoogle AdSenseスクリプトと、利用者が明示的に開くGoogleポリシーへの外部リンクである。アプリ独自の外部REST API呼び出し、`axios`、`XMLHttpRequest`、`sendBeacon` は存在しない。
-- 現在、クライアントまたはCloudflare構成に独自Rate Limitはない。UIのボタン無効化、確認メール再送の60秒cooldown、localStorage値はセキュリティ上のRate Limitとして扱わない。
+- Premium購入・状態確認時だけ、静的クライアントは公開設定 `NEXT_PUBLIC_PREMIUM_API_BASE_URL` の `/checkout` / `/premium` を `fetch` する。Firebase ID tokenとApp Check tokenはAuthorization用に送るが、localStorageへ独自保存しない。
+- 現在、Cloudflare DashboardのRate Limiting設定済みとは判定しない。UIのボタン無効化、確認メール再送の60秒cooldown、localStorage値はセキュリティ上のRate Limitとして扱わない。
 
 ## 2. Firebase App Check
 
@@ -58,11 +58,17 @@ Identity PlatformのApp Check連携は公式資料上Pre-GA条件が示される
 
 ## 3. Cloudflare側の防御
 
-現在は静的Assetsだけであり、Rate Limiting対象となる独自API endpointはない。このため本変更で `/api/*` やWorker APIを追加しない。CloudflareはFirebase AuthenticationのGoogle側endpointへの直接通信を中継しないため、Cloudflare Rate LimitingだけではFirebase Authの悪用を制限できない。
+静的Assets Worker `pomo-tm` は従来どおり `./out` だけを配信する。Stripe専用Worker `pomo-tm-stripe-api` は `/checkout`、`/premium`、`/webhook`だけを公開し、静的配信のroute・custom domain・D1非接続状態を変更しない。
+
+- `/checkout` と `/premium` は完全一致CORS origin、Firebase Authentication、Firebase App Checkをすべて検証する。
+- `/checkout` はクライアントから金額・Price ID・UIDを受け取らず、Worker環境のPriceをStripe APIでJPY 240円・月額として再検証する。
+- `/webhook` はraw body、`Stripe-Signature`、Worker secretを使うHMAC SHA-256検証に成功したeventだけを処理する。
+- D1の `stripe_webhook_events` でevent IDを冪等化し、`stripe_event_created` で古いeventによる状態の先祖返りを防止する。
+- Premiumは `active` / `trialing` かつ有効期限内だけtrueとし、success URL、React State、localStorageだけでは付与しない。
 
 Cloudflare Dashboard上のWAF、Bot、Rate Limiting設定はこのリポジトリから設定済みとは判定しない。利用可能な機能と料金は契約planおよび最新Consoleで確認する。
 
-将来APIを追加する場合は、APIを公開する前に次を必須とする。
+Stripe APIを公開する前、および将来APIを追加する場合は次を必須とする。
 
 1. `/api/*` をCloudflare Workerまたは別の認証済みbackendとして明示的に設計し、static exportとの配備境界を再評価する。
 2. Cloudflare Rate Limiting ruleを `/api/*` のmethodとendpoint単位で設定する。閾値を推測で固定せず、正常トラフィックを計測して設定する。
@@ -85,9 +91,10 @@ Cloudflare Dashboard上のWAF、Bot、Rate Limiting設定はこのリポジト�
 | Firebase Authentication | Google、メール／パスワード、確認メール | account creation、sign-in、verification emailの大量実行、Identity PlatformのDAU/MAU、quota枯渇 | App Check token付与、既存入力検証と60秒UI cooldown | Identity Platform料金、Identity Toolkit quota、メール送信quota、budget alert、email enumeration protection |
 | Firebase App Check | reCAPTCHA Enterprise provider | token refresh頻度、誤判定、未登録App遮断 | token auto refresh、browser-only初期化、既定TTLを不用意に短縮しない | metrics、risk threshold、TTL、Authentication enforcement |
 | reCAPTCHA Enterprise | App Check attestation | assessment増加によるquota消費・従量課金 | 不要な再初期化を避ける | Google Cloud Billing、assessment quota、budget alert、許可ドメイン |
-| Cloudflare Assets | `out` の静的配信 | 静的トラフィック、将来Worker/API追加時のrequest課金 | 現状はWorker APIを追加しない | plan limits、WAF / Bot / Rate Limitingの利用可否、通知設定 |
+| Cloudflare Assets / Workers | `out` の静的配信、Stripe専用API | 静的トラフィック、API request、Stripe/Firebase外部照会 | API責務分離、認証・App Check・入力検証 | plan limits、WAF / Bot / Rate Limiting、Worker observability、通知設定 |
 | Google AdSense | 外部広告script | 広告配信側のポリシー・通信 | アプリ固有API費用の防御対象外 | AdSense Consoleとポリシー |
-| D1 | 現在未接続 | 将来の無制限query、write増加 | 現時点ではbindingを追加しない | 導入時のread/write/storage quotaとbudget運用 |
+| D1 | Stripe専用WorkerだけがSubscription状態を同期 | Webhook再送や状態照会によるread/write増加 | 署名検証、event ID冪等化、必要最小限のquery | 本番schema差分、read/write/storage quota、backup・budget運用 |
+| Stripe | 月額Premium Checkout / Subscription | 不正Checkout、Webhook偽装、重複event、決済状態の不整合 | サーバー固定Price、署名検証、D1冪等化、正規状態の限定 | Product/Price、Webhook endpoint、test/live secret分離、税・返金・顧客対応 |
 
 Firebase Authentication、App Check、reCAPTCHA Enterprise、Cloudflareの最新料金・無料枠・quotaは「要Console確認」であり、この文書の数値を課金判断に使用しない。
 
@@ -98,5 +105,8 @@ Firebase Authentication、App Check、reCAPTCHA Enterprise、Cloudflareの最新
 - App Check metricsで正規のGoogle／メール認証リクエストがVerifiedになっている。
 - enforcement前後でGoogle login、メールlogin、登録、確認メール、60秒再送cooldown、logoutを実機確認している。
 - Authorized domains、email enumeration protection、Identity Toolkit quota、billing budget alertをConsoleで確認している。
-- Cloudflare配備は `wrangler.json` のstatic Assets構成を維持し、OpenNext、D1 binding、独自APIを追加していない。
-- 将来APIはAuthentication、App Check、Cloudflare Rate Limiting、server-side validation、quota、loggingのレビューを完了するまで公開しない。
+- 静的配備は `wrangler.json` のAssets構成を維持し、Stripe専用WorkerへだけD1 bindingとsecretを設定している。
+- 本番D1 schemaを取得し、`migrations/0001_stripe_webhook_events.sql`との差分をレビューしてから適用している。
+- Stripe test modeでCheckout、cancel、署名検証、event再送、active、past_due、canceled、期限切れを確認している。
+- `/checkout` と `/premium` へCloudflare Rate Limiting、WAF、監視、request/error alertを設定している。
+- `STRIPE_SECRET_KEY`と`STRIPE_WEBHOOK_SECRET`はStripe専用Worker secret storeだけにあり、静的build環境とclient bundleには存在しない。

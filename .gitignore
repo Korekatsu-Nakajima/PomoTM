@@ -5,4 +5,7 @@ out/
 .env.local
 .env
 .env.example
+!.env.example
+.dev.vars
+**/.dev.vars
 .open-next

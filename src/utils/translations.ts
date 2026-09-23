@@ -81,6 +81,22 @@ export type TranslationDictionary = {
     activeRemaining: string;
     notOwned: string;
     use: string;
+    premium: string;
+    premiumPrice: string;
+    premiumContinuousPlayback: string;
+    premiumAdFree: string;
+    premiumBreakMode: string;
+    premiumExclusive: string;
+    premiumUpgrade: string;
+    premiumComingSoon: string;
+    premiumChecking: string;
+    premiumActive: string;
+    premiumActiveUntil: string;
+    premiumLoginRequired: string;
+    premiumCheckoutFailed: string;
+    premiumCheckoutCanceled: string;
+    premiumStatusFailed: string;
+    premiumConfigurationMissing: string;
   };
 };
 
@@ -189,7 +205,7 @@ export const translations: Record<Language, TranslationDictionary> = {
             title: "1. 取得する情報",
             paragraphs: [
               "Firebase Authenticationを通じて、FirebaseのユーザーID、メールアドレス、メール確認状態、表示名、プロフィール画像、利用した認証方式等を取得します。Googleログインを選択した場合は、利用者がGoogleの同意画面で許可した基本プロフィール情報を取得します。Googleのパスワードを本サービスが取得することはありません。",
-              "機能の提供に応じて、タイマーやゲームの設定、獲得アイテム、プレミアム状態、購入・サブスクリプション状態、ゲストデータ移行用ID等を端末のlocalStorageまたはCloudflare D1等のデータベースへ保存することがあります。決済カード番号等は、将来導入する決済事業者が直接処理し、本サービスでは保持しません。",
+              "タイマーやゲームの設定、獲得アイテム、ゲストデータ移行用ID等は端末のlocalStorageへ保存することがあります。プレミアム状態と購入・サブスクリプション状態はCloudflare D1等のサーバー側データベースで管理し、端末のlocalStorageには保存しません。決済カード番号等は決済事業者が直接処理し、本サービスでは保持しません。",
               "安全性、障害解析および性能改善のため、IPアドレス、ブラウザ・端末情報、アクセス日時、操作・エラー情報等の技術情報がホスティング、認証、解析または広告サービスにより取得されることがあります。",
             ],
           },
@@ -257,10 +273,26 @@ export const translations: Record<Language, TranslationDictionary> = {
       rocketBoostDescription: "ロケットイベントを強化するためのアイテムです。（有効時間: 30分）",
       goldBoost: "ゴールドブースト",
       goldBoostDescription: "金トマトの出現確率をアップさせるアイテムです。（有効時間: 30分）",
-      breakNote: "※休憩中はアイテムの減算は行われません。",
+      breakNote: "※一時停止・バックグラウンド中もアイテム時間は減算されます。通常の休憩中のみ停止し、広告ボーナス中は休憩中も減算されます。",
       activeRemaining: "使用中 残り{time}",
       notOwned: "未所持",
       use: "使用",
+      premium: "プレミアム",
+      premiumPrice: "月額 ¥240",
+      premiumContinuousPlayback: "連続再生",
+      premiumAdFree: "広告非表示",
+      premiumBreakMode: "休憩中もプレミアムモード",
+      premiumExclusive: "プレミアム限定",
+      premiumUpgrade: "プレミアムにアップグレード",
+      premiumComingSoon: "決済機能は準備中です",
+      premiumChecking: "プレミアムを確認しています…",
+      premiumActive: "プレミアム利用中",
+      premiumActiveUntil: "有効期限: {date}",
+      premiumLoginRequired: "プレミアム機能を利用するにはログインが必要です。",
+      premiumCheckoutFailed: "決済を開始できませんでした。時間をおいてもう一度お試しください。",
+      premiumCheckoutCanceled: "決済がキャンセルされました。",
+      premiumStatusFailed: "プレミアム状態を確認できませんでした。ゲームはそのまま利用できます。",
+      premiumConfigurationMissing: "プレミアム決済は現在設定中です。",
     },
   },
   en: {
@@ -367,7 +399,7 @@ export const translations: Record<Language, TranslationDictionary> = {
             title: "1. Information We Collect",
             paragraphs: [
               "Through Firebase Authentication, we collect a Firebase user ID, email address, email-verification status, display name, profile image, and authentication provider. If you choose Google sign-in, we receive the basic profile information you approve on Google’s consent screen. The Service never receives your Google password.",
-              "Depending on the features you use, timer and game settings, collected items, premium status, purchase or subscription status, and a guest-migration identifier may be stored in browser localStorage or a database such as Cloudflare D1. If payment processing is introduced, payment-card details will be handled directly by the payment provider and will not be stored by the Service.",
+              "Timer and game settings, collected items, and a guest-migration identifier may be stored in browser localStorage. Premium status and purchase or subscription status are managed in a server-side database such as Cloudflare D1 and are not stored in localStorage. Payment-card details are handled directly by the payment provider and are not stored by the Service.",
               "Hosting, authentication, analytics, advertising, or security providers may collect technical information such as IP address, browser and device information, access time, interactions, and error data for security, diagnostics, and performance improvement.",
             ],
           },
@@ -435,10 +467,26 @@ export const translations: Record<Language, TranslationDictionary> = {
       rocketBoostDescription: "Boosts rocket event odds. (Duration: 30 min)",
       goldBoost: "Gold Boost",
       goldBoostDescription: "Increases the chance of Gold Tomatoes. (Duration: 30 min)",
-      breakNote: "Items are not consumed during breaks.",
+      breakNote: "Item time continues during pauses and in the background. It pauses only during normal breaks and continues during ad bonus breaks.",
       activeRemaining: "Active, {time} remaining",
       notOwned: "Not owned",
       use: "Use",
+      premium: "Premium",
+      premiumPrice: "¥240 / month",
+      premiumContinuousPlayback: "Continuous playback",
+      premiumAdFree: "Ad-free",
+      premiumBreakMode: "Premium mode during breaks",
+      premiumExclusive: "Premium only",
+      premiumUpgrade: "Upgrade to Premium",
+      premiumComingSoon: "Payments coming soon",
+      premiumChecking: "Checking Premium status…",
+      premiumActive: "Premium active",
+      premiumActiveUntil: "Active until {date}",
+      premiumLoginRequired: "Sign in to use Premium features.",
+      premiumCheckoutFailed: "Could not start checkout. Please try again later.",
+      premiumCheckoutCanceled: "Checkout was canceled.",
+      premiumStatusFailed: "Could not check Premium status. The game remains available.",
+      premiumConfigurationMissing: "Premium checkout is currently being configured.",
     },
   },
 };

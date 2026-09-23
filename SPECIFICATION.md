@@ -230,7 +230,7 @@
 - 通貨は所持Goldトマト。金トマトが物理Worldへ生成された時に加算する。
 - 3種の消費型バフはGold交換ではなく、集中完了報酬で獲得した所持アイテムを1個消費して有効化する。
 - UFOおよびSpace Octopusの永久解放では従来どおりGoldを消費する。消費時は通貨と論理カウントを減らし、物理World上のGold Bodyを山の上側（`bounds.min.y` が小さい順）から消費数まで削除する。World上のGoldが不足してもエラーにしない。
-- バフ時間は各30分。Focusかつタイマー再生中のみ1秒ずつ減算し、休憩中は減算しない。
+- バフ時間は各30分。Focusではタイマーの再生／一時停止やページ表示状態にかかわらず実時間で減算する。通常Breakでは減算を停止し、広告視聴によるBonus Break中はタイマーの再生／一時停止やページ表示状態にかかわらず減算を継続する。バックグラウンドでintervalが抑制された時間は次回tick時に経過秒を反映する。
 
 | アイテム | 集中完了時の獲得率 | 使用条件・効果 |
 | --- | ---: | --- |
@@ -247,7 +247,13 @@
 - 有効なバフは使用ボタン内部を残り時間 `MM:SS` 表示へ切り替え、押下不可にする。`ACTIVE` 表記およびボタン下の別行時間表示は使用しない。
 - Shop上部では所持Gold数を表示せず、UFO永久解放とSpace Octopus永久解放だけを同じ高さ・同じ幅のコンパクトボタンとして折り返さず横一列に表示する。Space Octopusは未解放時に1,000 Goldで解除でき、解放後は「宇宙タコ解除済み」と表示する。解除可否の内部判定には既存の所持Gold Stateを引き続き使用する。
 - Space Octopusの説明付き大型カードは表示せず、永久解放操作を上部ステータス列へ集約する。
-- ショップ末尾には「※休憩中はアイテムの減算は行われません。」を1回だけ表示する。
+- ショップ末尾には、一時停止・バックグラウンド中も減算すること、通常Breakのみ停止すること、Bonus Break中は休憩中も減算することを示す注意書きを1回だけ表示する。
+- 既存アイテムと注意書きの後ろに、全ユーザーへ常時表示するプレミアム案内カードを配置する。価格表示は月額240円で、特典は「連続再生（プレミアム限定表示）」「広告非表示」「休憩中もプレミアムモード」の3項目とする。
+- プレミアム案内は白とごく淡いemeraldを基調に、Focusでは輪郭を明瞭に、Breakではより柔らかい背景と影を使う。金色、王冠、ネオン、点滅・移動アニメーションは使用しない。
+- 「プレミアムにアップグレード」は `PremiumPlanCard` からStripe専用Cloudflare Workerの `/checkout` を呼び、Stripe-hosted Checkoutへ遷移する。Stripe API処理はShopやゲーム本体へ直接記述しない。
+- ゲストまたは未確認メールユーザーがCTAを押した場合は既存 `AuthModal` を開き、Checkoutを開始しない。ゲストとしてのタイマー・ゲーム利用は制限しない。
+- Checkout復帰の `checkout=success` は権限付与に使用せず、専用Workerの `/premium` を最大5回再取得する合図だけに使う。`checkout=cancel` はキャンセル表示だけを行う。いずれも処理後にqueryを除去する。
+- Premium状態はlocalStorageへ保存しない。現時点ではプレミアム状態を連続再生、広告、Break、Matter.js、タイマーへ接続せず、既存 `canUseAutoSwitch` の挙動も変更しない。
 
 ### 1.13 永続化
 
@@ -295,9 +301,11 @@
 - `accounts` はOAuth等の外部アカウントを管理し、providerとprovider側IDの組を一意にする。`sessions` はCookie用tokenと期限を管理する。
 - `rankings` は非負scoreを保持し、ユーザー削除時も表示名とscoreを残してuser参照だけをNULLにする。
 - `user_items` はユーザー・itemごとに一意で、消費型の `quantity`、バフ期限 `active_until`、永久解放用 `is_unlocked` / `unlocked_at` を同時に管理する。quantityを負数にしない。
-- `subscriptions` はStripe等のprovider、決済status、customer／price ID、期間、期末解約、キャンセル日時を保持する。ユーザー削除時は関連行も削除する。
-- `src/types/db.ts` は全6テーブルの行型、Insert/Update型、Subscription status unionを提供する。`isUserPremium()` はフラグに加えて期限切れも検査し、期限NULLの有効フラグは無期限として扱う。
+- `subscriptions` はStripe provider、決済status、customer／price ID、期間、期末解約、キャンセル日時、最後に反映したStripe event時刻を保持する。古いWebhookが遅れて到着した場合は新しい状態を上書きしない。ユーザー削除時は関連行も削除する。
+- `stripe_webhook_events` は処理済みStripe event IDを保持し、Webhook再送を冪等に処理する。処理失敗時はevent IDを削除し、Stripeの再送で再実行できるようにする。
+- `src/types/db.ts` は各テーブルの行型、Insert/Update型、Subscription status unionを提供する。`isUserPremium()` はフラグに加えて期限切れも検査し、期限NULLの有効フラグは無期限として扱う。
 - `schema.sql` は新規DB構築用の正規定義であり、既存の本番D1へ推測で適用しない。既存テーブルへ反映する場合は、本番schemaを取得して差分マイグレーションを別途作成・レビューしてから実行する。
+- `migrations/0001_stripe_webhook_events.sql` はリポジトリ上の直前schemaとの差分案であり、本番D1 schemaとの一致を確認するまで適用しない。
 
 ### 1.17 Cloudflare静的Assetsデプロイ
 
@@ -309,8 +317,12 @@
 - `npm run deploy` は先に `npm run build`を完了し、その後 `wrangler deploy --config wrangler.json` を実行する。Wranglerを直接実行する場合も `wrangler.json` を明示し、旧OpenNext設定を参照させない。
 - `npm run preview` も `npm run build`後に `wrangler dev --config wrangler.json` を実行し、本番と同じ静的Assets設定を使用する。
 - 旧OpenNext経路は `output: "export"` で生成される現在の`.next`に存在しないstandalone server manifestを要求し、実行不能かつ本番deployから未参照だったため削除済みとする。`wrangler.toml`、`open-next.config.ts`、OpenNext専用npm scriptsおよび依存パッケージを戻さない。
-- 現在の `src` 実行コードはD1 bindingや `getCloudflareContext()` を参照していないため、静的deploy用 `wrangler.json` にD1 bindingを追加しない。将来D1を実装する場合は静的クライアントから直接接続せず、認証済みAPIを含む配備方式を改めて設計する。
+- 静的ゲーム配信用 `pomo-tm` はD1 bindingやStripe Secretを持たず、ルート `wrangler.json` にD1 bindingを追加しない。Stripe連携は `workers/stripe-api/wrangler.jsonc` の別Worker `pomo-tm-stripe-api`へ分離し、D1 binding `DB` は実DBを確認後にCloudflare Dashboardで設定する。
 - 現在のクライアントアプリは静的export可能な構成を維持する。Server Actions、リクエスト依存の動的Route Handler、SSR必須APIを追加する場合は、静的配備との互換性を事前に再評価する。
+- Stripe Workerは `/checkout`、`/premium`、`/webhook` だけを公開する。前2つは完全一致CORS origin、Firebase ID token、Firebase App Check tokenを必須とし、Webhookは生bodyと `Stripe-Signature` をHMAC SHA-256で検証する。
+- `/checkout` はサーバー設定済みPriceだけを使用し、実際にactive・JPY・240円・月額であることをStripe APIで再検証する。クライアントからPrice IDや金額を受け取らない。
+- Firebase UIDはStripe CustomerおよびSubscription metadataの `firebase_uid` に保存する。D1の `users.id` と `subscriptions.user_id` も同じUIDとし、クライアント指定user IDは使用しない。
+- Premiumの正規情報源はStripe Subscriptionを署名検証済みWebhookで同期したD1である。`active` / `trialing` かつ期間内だけPremiumとし、`past_due` / `canceled` / `unpaid` / `incomplete` / 期限切れはPremiumにしない。
 
 ## 2. UI / レイアウト仕様（崩してはいけない要素）
 
@@ -384,7 +396,7 @@
 ### 2.8 Shop / Reward Modal
 
 - Shopはカード全体を覆う絶対配置。背景クリックで閉じ、ダイアログ内のmousedownは伝播停止。
-- Shopカードは最大lg。上部ステータス列にはUFO解放・Octopus解放だけを同一ラインで表示し、その下に3種アイテムの所持数・使用操作・バフ残り時間を表示する。Shop内では所持Goldバッジを表示しない。消費アイテム発動中は使用ボタン自体が `MM:SS` 表示となり、追加の時間行やOctopus大型カードは持たない。
+- Shopカードは最大lg。上部ステータス列にはUFO解放・Octopus解放だけを同一ラインで表示し、その下に3種アイテムの所持数・使用操作・バフ残り時間を表示する。Shop内では所持Goldバッジを表示しない。消費アイテム発動中は使用ボタン自体が `MM:SS` 表示となり、追加の時間行やOctopus大型カードは持たない。既存商品群の末尾にはプレミアム案内カードを配置し、狭い画面ではモーダル内部だけを縦スクロールしてviewport外へのはみ出しを防ぐ。CTAは未ログイン時にAuthModal、認証済み時に専用APIのCheckoutを開始し、処理中またはPremium有効時は二重押下を防ぐ。
 - Reward選択はShopより前の `z-[60]`、最大md。疑似動画中は5秒カウントを表示する。アイテム獲得時は同じレイヤーの操作非遮断トーストへ切り替わり、自動でフェードアウトする。
 - Break時はアプリ、カード、ボタン、モーダル、Canvas背景を明るいテーマへ遷移する。既存実装には休憩アクセントとしてemerald色が存在する。
 
@@ -521,7 +533,8 @@
 | `src/app/globals.css` | Tailwind読込、全画面overflow制御、button cursor、no-scrollbar |
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |
 | `src/app/terms/page.tsx` | OAuth審査・直接参照向けの静的な利用規約ページ |
-| `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI |
+| `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI、PremiumPlanCardの配置 |
+| `src/components/PremiumPlanCard.tsx` | プレミアム案内、Firebase認証状態、AuthModal導線、Checkout開始、D1同期済みPremium状態表示 |
 | `src/components/SettingsModal.tsx` | 日本語／英語の選択UI、ゲーム音声ON/OFF、Firebase `onAuthStateChanged` 購読、ゲスト／ログイン済みアカウント表示、Googleプロフィール画像、Firebaseログアウト導線、Focus/Breakテーマ対応 |
 | `src/components/AuthModal.tsx` | Firebase Googleポップアップ認証、メール／パスワードのログイン・新規登録、表示名更新、認証中・エラー表示 |
 | `src/components/TermsModal.tsx` | 日英利用規約のスクロール表示、Settingsへ戻る閉じる操作、Focus/Breakテーマ対応 |
@@ -537,9 +550,13 @@
 | `src/utils/translations.ts` | `ja` / `en` の対訳辞書、利用規約・プライバシーポリシー本文、言語型、`pomotm_lang` 保存キー、保存値検証 |
 | `src/lib/config.ts` | タイマー時間、供給間隔、基本World寸法などのアプリ設定 |
 | `src/lib/firebase.ts` | Firebase Web SDKの単一初期化、reCAPTCHA Enterprise App Checkのbrowser-only初期化、Firebase AuthおよびGoogleAuthProviderのexport、環境変数参照 |
-| `src/types/db.ts` | D1のusers/accounts/sessions/rankings/user_items/subscriptions行型、書込型、プレミアム判定ヘルパー |
-| `schema.sql` | Cloudflare D1の正規スキーマ、外部キー・一意制約・CHECK制約・検索インデックス |
-| `.env.example` | Firebase Web App、App Check公開site key、local debug opt-inの `NEXT_PUBLIC_FIREBASE_*` 環境変数例。実プロジェクト値は環境ごとに設定する |
+| `src/lib/premium.ts` | Firebase ID tokenとApp Check tokenを付けたPremium API client、型付き状態取得、Stripe Checkout URL検証 |
+| `src/types/db.ts` | D1のusers/accounts/sessions/rankings/user_items/subscriptions/webhook event行型、書込型、プレミアム判定ヘルパー |
+| `schema.sql` | Cloudflare D1の正規スキーマ、Subscription・Webhook冪等性を含む外部キー・制約・索引 |
+| `migrations/0001_stripe_webhook_events.sql` | 既存D1を確認後にレビュー・適用するStripe event時刻とWebhook冪等性テーブルの差分案 |
+| `workers/stripe-api/src/index.ts` | Stripe Checkout、Firebase/Auth App Check検証、Webhook署名検証、D1 Premium同期、状態取得API |
+| `workers/stripe-api/wrangler.jsonc` | 静的配信と分離した `pomo-tm-stripe-api` Worker設定。実D1 ID・route・secretは含めない |
+| `.env.example` | Firebase公開設定、Premium API公開URL、Stripe Workerのsecret／variable名だけを示すプレースホルダー |
 | `SECURITY.md` | 現在の通信境界、App CheckとConsole設定、コスト・quotaリスク、将来APIの必須防御 |
 | `next.config.ts` | 開発オリジン許可、`output: "export"` による静的 `out` 生成 |
 | `wrangler.json` | `pomo-tm` の静的Assets設定。配信元は `./out` |
@@ -559,7 +576,8 @@ page.tsx
 │  └─ onAltitudeChange() ──> 現在標高・最高標高更新
 ├─ ShopModal
 │  ├─ 消費型アイテム使用時に所持数を1減らして30分バフを開始
-│  └─ 永久解放購入時のみ PhysicsCanvas.removeGolden(count)
+│  ├─ 永久解放購入時のみ PhysicsCanvas.removeGolden(count)
+│  └─ PremiumPlanCard ──> Firebase token + App Check token ──> Stripe API Worker
 ├─ SettingsModal
 │  ├─ 言語選択 ──> page.tsxのlanguage State更新 ──> pomotm_lang保存・UI即時更新
 │  └─ onAuthStateChanged ──> Firebase User表示 / signOut(auth)
@@ -611,8 +629,8 @@ page.tsx
 - 認証モーダルは設定画面から明示的に開いた場合だけ表示する。未ログイン時に自動表示せず、ゲストはタイマー・物理・ゲーム機能を制限なく利用できる。
 - Firebase ConsoleではGoogleとメール／パスワードのSign-in providerを有効化し、ローカルおよび本番のホスト名をAuthorized domainsへ登録する。
 - Authentication App Checkを利用する本番projectはIdentity Platformへアップグレードし、Firebase App Checkへ本番Web AppとreCAPTCHA Enterprise score-based keyを登録する。enforcement前にmetricsで正規通信を確認し、料金・quota・提供条件をConsoleで確認する。
-- 現在は独自 `/api/*`、D1 runtime接続、Cloudflare Rate Limiting ruleを持たない。将来APIを公開する場合はAuthentication、App Checkのサーバー検証、Cloudflare Rate Limiting、server-side input validation、endpoint/user quota、secretを含めないloggingを必須とする。詳細は `SECURITY.md` に従う。
-- `schema.sql` とD1の既存ユーザー関連テーブルは将来のゲームデータ同期・課金連携用の設計として残るが、ブラウザ認証やパスワード検証には使用しない。
+- Stripe専用WorkerだけがFirebase ID tokenとApp Check tokenをサーバー検証してD1へ接続する。静的ゲームWorkerとブラウザはD1へ直接接続しない。Cloudflare Rate LimitingはDashboardで実測値に基づき `/checkout` と `/premium` へ別途設定する。詳細は `SECURITY.md` に従う。
+- `schema.sql` とD1のユーザー・Subscription関連テーブルはPremium状態同期に使用するが、ブラウザ認証やパスワード検証には使用しない。Firebase Authenticationを本人確認の正規経路として維持する。
 
 ## 5. 変更時チェックリスト
 
@@ -620,6 +638,7 @@ page.tsx
 - `npm run build` で `/`、`/privacy`、`/terms` が生成されること。
 - `npm run build` で `out` が生成され、`out/index.html`、`out/privacy.html`、`out/terms.html`、`out/manifest.webmanifest` が存在すること。
 - `npx wrangler deploy --dry-run --config wrangler.json` が `./out` のassetsを読み込み、entry-pointまたはassets directory missingを報告しないこと。
+- `npm run stripe-worker:dry-run` がStripe専用Workerをsecret実値なしでbundleできること。
 - `wrangler.json` のCustom Domainが `pomotm.com` と `www.pomotm.com` の2件で、どちらも `custom_domain: true` であること。
 - Focus/Break/Pause/Reset/Spaceキー、Reward分岐、Bonus Break終了リセットを確認すること。
 - Matter.jsがタイマー停止中とページ非表示中にも更新されること。

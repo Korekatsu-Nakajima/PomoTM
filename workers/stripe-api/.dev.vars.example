@@ -1,0 +1,8 @@
+STRIPE_SECRET_KEY=sk_test_replace_me
+STRIPE_WEBHOOK_SECRET=whsec_replace_me
+STRIPE_PRICE_ID_PREMIUM_MONTHLY=price_replace_me
+FIREBASE_WEB_API_KEY=replace_me
+FIREBASE_PROJECT_NUMBER=replace_me
+FIREBASE_APP_ID=replace_me
+APP_ORIGINS=http://localhost:3000
+APP_URL=http://localhost:3000

@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "pomo-tm-stripe-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-21",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pomo-db",
+      "database_id": "6a87c217-8355-48d8-972e-32410952df34"
+    }
+  ],
+  "vars": {
+    "APP_ORIGINS": "https://pomotm.com,https://www.pomotm.com",
+    "APP_URL": "https://pomotm.com",
+    "STRIPE_PRICE_ID_PREMIUM_MONTHLY": "price_1UI2Y4ReeXHjmkuQv24RSkW5",
+    "FIREBASE_WEB_API_KEY": "AIzaSyDAGrx21d8Bm3eABGIyhP-nnQcYy6zVv-I",
+    "FIREBASE_PROJECT_NUMBER": "93327256530",
+    "FIREBASE_APP_ID": "1:93327256530:web:5aaf0ac1b83345535e360b"
+  }
+}

@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "npm run build && wrangler dev --config wrangler.json",
     "deploy": "npm run build && wrangler deploy --config wrangler.json",
+    "stripe-worker:dry-run": "wrangler deploy --dry-run --config workers/stripe-api/wrangler.jsonc",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {

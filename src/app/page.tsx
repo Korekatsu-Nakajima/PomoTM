@@ -342,14 +342,19 @@ export default function Home() {
     return () => window.clearInterval(bonusSupplyTimer);
   }, [activeBuffs.goldBoost, isBonusBreakMode, timer.mode, timer.running]);
   useEffect(() => {
-    if (!hydrated || !timer.running || timer.mode !== "focus") return;
+    if (!hydrated || (timer.mode === "break" && !isBonusBreakMode)) return;
+    let previousBuffTickAt = Date.now();
     const buffTimer = window.setInterval(() => {
+      const now = Date.now();
+      const elapsedSeconds = Math.floor((now - previousBuffTickAt) / 1_000);
+      if (elapsedSeconds < 1) return;
+      previousBuffTickAt += elapsedSeconds * 1_000;
       setBuffRemaining((current) => {
         if (current.doubleDrop <= 0 && current.balloonBoost <= 0 && current.goldBoost <= 0) return current;
         const next = {
-          doubleDrop: Math.max(0, current.doubleDrop - 1),
-          balloonBoost: Math.max(0, current.balloonBoost - 1),
-          goldBoost: Math.max(0, current.goldBoost - 1),
+          doubleDrop: Math.max(0, current.doubleDrop - elapsedSeconds),
+          balloonBoost: Math.max(0, current.balloonBoost - elapsedSeconds),
+          goldBoost: Math.max(0, current.goldBoost - elapsedSeconds),
         };
         if ((current.doubleDrop > 0 && next.doubleDrop === 0)
           || (current.balloonBoost > 0 && next.balloonBoost === 0)
@@ -364,7 +369,7 @@ export default function Home() {
       });
     }, 1_000);
     return () => window.clearInterval(buffTimer);
-  }, [hydrated, timer.mode, timer.running]);
+  }, [hydrated, isBonusBreakMode, timer.mode]);
   const time = `${String(Math.floor(timer.remaining / 60)).padStart(2, "0")}:${String(timer.remaining % 60).padStart(2, "0")}`;
   const isBreak = timer.mode === "break";
   useEffect(() => { document.title = `${time} · ${timer.mode === "focus" ? t.timer.focus : t.timer.break}`; }, [t.timer.break, t.timer.focus, time, timer.mode]);

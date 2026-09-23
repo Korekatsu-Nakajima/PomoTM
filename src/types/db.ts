@@ -81,8 +81,15 @@ export interface Subscription {
   current_period_start: DatabaseDateTime | null;
   current_period_end: DatabaseDateTime | null;
   canceled_at: DatabaseDateTime | null;
+  stripe_event_created: number;
   created_at: DatabaseDateTime;
   updated_at: DatabaseDateTime;
+}
+
+export interface StripeWebhookEvent {
+  id: string;
+  event_type: string;
+  processed_at: DatabaseDateTime;
 }
 
 export type UserInsert = Pick<User, "id"> & Partial<Omit<User, "id">>;
