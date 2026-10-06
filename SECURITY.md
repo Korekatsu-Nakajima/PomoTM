@@ -9,6 +9,7 @@
 - クライアント実行コードはD1 binding、`getCloudflareContext()`、D1クエリを使用しない。Stripe専用WorkerだけがCloudflare Dashboardで設定されたD1 binding `DB`へ接続する。frontend Testの `pomo_db_test` bindingは `wrangler.test.json` にだけ定義し、Production deploy／dry-runは必ず `wrangler.production.json` を明示する。config指定を省略したfrontend deployを実行してはならない。
 - 認証通信はFirebase Web SDKによるFirebase Authenticationへの直接通信である。Google popup、メール／パスワードログイン、登録、確認メール送信、ユーザー再読込を利用する。
 - Premium購入・状態確認時だけ、静的クライアントは公開設定 `NEXT_PUBLIC_PREMIUM_API_BASE_URL` の `/checkout` / `/premium` を `fetch` する。Firebase ID tokenとApp Check tokenはAuthorization用に送るが、localStorageへ独自保存しない。
+- `NEXT_PUBLIC_GA_MEASUREMENT_ID` に有効な公開Measurement IDが設定されたbuildは、Root LayoutからGoogle Analytics 4のGoogle tagを一度だけ読み込み、標準アクセス解析データをGoogleへ送信する。Measurement IDは公開識別子でありsecretではないが、PomoTM独自イベント、Firebase ID token、App Check token、Firebase UID、メールアドレス、ゲームデータをGA4へ送信しない。
 - 現在、Cloudflare DashboardのRate Limiting設定済みとは判定しない。UIのボタン無効化、確認メール再送の60秒cooldown、localStorage値はセキュリティ上のRate Limitとして扱わない。
 
 ## 2. Firebase App Check
@@ -93,6 +94,7 @@ Stripe APIを公開する前、および将来APIを追加する場合は次を�
 | reCAPTCHA Enterprise | App Check attestation | assessment増加によるquota消費・従量課金 | 不要な再初期化を避ける | Google Cloud Billing、assessment quota、budget alert、許可ドメイン |
 | Cloudflare Assets / Workers | `out` の静的配信、Stripe専用API | 静的トラフィック、API request、Stripe/Firebase外部照会 | API責務分離、認証・App Check・入力検証 | plan limits、WAF / Bot / Rate Limiting、Worker observability、通知設定 |
 | Google AdSense | 外部広告script | 広告配信側のポリシー・通信 | アプリ固有API費用の防御対象外 | AdSense Consoleとポリシー |
+| Google Analytics 4 | 公開Measurement ID設定時の標準アクセス解析 | Googleへの技術情報送信、Cookie等、外部通信 | カスタムイベントを実装せず、秘密情報・認証情報・ユーザー識別子・ゲームデータを送信しない | Analytics Console、データ保持、Googleシグナル、同意・地域別要件、計測設定 |
 | D1 | Stripe専用WorkerだけがSubscription状態を同期 | Webhook再送や状態照会によるread/write増加 | 署名検証、event ID冪等化、必要最小限のquery | 本番schema差分、read/write/storage quota、backup・budget運用 |
 | Stripe | 月額Premium Checkout / Subscription | 不正Checkout、Webhook偽装、重複event、決済状態の不整合 | サーバー固定Price、署名検証、D1冪等化、正規状態の限定 | Product/Price、Webhook endpoint、test/live secret分離、税・返金・顧客対応 |
 

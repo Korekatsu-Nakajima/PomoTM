@@ -1,6 +1,11 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import "./globals.css";
+
+const gaMeasurementId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
+const isGoogleAnalyticsConfigured =
+  typeof gaMeasurementId === "string" && /^G-[A-Z0-9]+$/.test(gaMeasurementId);
 
 export const metadata: Metadata = {
   title: "PomoTM - トマトが積み上がるポモドーロタイマー | 勉強・作業用タイマー",
@@ -76,6 +81,23 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         {children}
         <PWAInstallPrompt />
+        {isGoogleAnalyticsConfigured && (
+          <>
+            <Script
+              id="pomotm-google-analytics"
+              strategy="afterInteractive"
+              src={`https://www.googletagmanager.com/gtag/js?id=${gaMeasurementId}`}
+            />
+            <Script id="pomotm-google-analytics-config" strategy="afterInteractive">
+              {`
+                window.dataLayer = window.dataLayer || [];
+                function gtag(){window.dataLayer.push(arguments);}
+                gtag('js', new Date());
+                gtag('config', '${gaMeasurementId}');
+              `}
+            </Script>
+          </>
+        )}
       </body>
     </html>
   );

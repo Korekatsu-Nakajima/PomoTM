@@ -21,7 +21,7 @@
 - Tailwind CSS 4系を `src/app/globals.css` から読み込む。
 - Matter.js 0.20系をCanvas物理演算に使用する。
 - UIアイコンは `lucide-react` を使用する。
-- Vercel Analytics と Vercel Speed Insights をRoot Layoutに常設する。
+- 有効な `NEXT_PUBLIC_GA_MEASUREMENT_ID` が設定されたbuildでは、Google Analytics 4のGoogle tagをRoot Layoutから全ページ共通で一度だけ読み込む。PomoTM独自のカスタムイベントは実装しない。
 - パスエイリアスは `@/* -> ./src/*`。
 - 開発アクセス許可は `localhost:3000` と `192.168.56.1`。
 
@@ -391,7 +391,7 @@
 
 - `/privacy` と `/terms` はServer Componentで、独自に `h-[100dvh] overflow-y-auto` を持つ。グローバルbodyのoverflow hidden下でも縦スクロール可能で、クライアントStateや認証状態に依存せず直接アクセスできる。
 - 両ページとも最大幅3xlのレスポンシブカードとトップへ戻るリンクを持ち、Next.jsの静的export対象とする。
-- `/privacy` はGoogle AdSense / Cookie、Googleポリシー外部リンク、Vercel Analytics / Speed Insights、免責事項を含む。
+- `/privacy` はGoogle AdSense / Cookie、Googleポリシー外部リンク、Google Analytics 4の標準アクセス解析とオプトアウト案内、免責事項を含む。
 - `/terms` はSettings内のTerms Modalと同じ日本語の規約データを参照し、サービス目的、アカウント管理、禁止事項、知的財産、サービス変更・停止、免責・責任制限、規約変更を含む。
 - 外部Googleリンクは別タブで開き、`noopener noreferrer` を付与する。
 
@@ -530,7 +530,7 @@
 
 | ファイル | 責務 |
 | --- | --- |
-| `src/app/layout.tsx` | SEO Metadata、Open Graph、Twitter Card、AdSenseスクリプト、全ページ共通HTML構造 |
+| `src/app/layout.tsx` | SEO Metadata、Open Graph、Twitter Card、AdSenseスクリプト、環境設定時のGA4共通script、全ページ共通HTML構造 |
 | `src/app/manifest.ts` | PWA Manifest Metadata Route、standalone表示、テーマ色、アプリアイコン定義 |
 | `src/app/globals.css` | Tailwind読込、全画面overflow制御、button cursor、no-scrollbar |
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |

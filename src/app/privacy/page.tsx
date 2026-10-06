@@ -59,9 +59,32 @@ export default function PrivacyPolicyPage() {
             >
               2. アクセス解析ツールについて
             </h2>
-            <p className="mt-4">
-              当サイトでは、サイトの利用状況の把握およびパフォーマンス改善のため、Vercel Analytics、Vercel Speed Insights等のアクセス解析ツールを使用しています。これらのツールにより収集される情報は、個人を直接特定しない匿名データとして取り扱われます。
-            </p>
+            <div className="mt-4 space-y-4">
+              <p>
+                当サイトでは、利用状況の把握とサービス改善のためGoogle Analytics 4を利用します。公開環境変数に有効なMeasurement IDが設定された場合、Google tagがページビュー、セッション、流入元、端末・ブラウザ情報、IPアドレスから推定される地域等をGoogleへ送信します。Google AnalyticsはCookie等を使用することがあります。当サイト独自のカスタムイベントは実装していません。
+              </p>
+              <p>
+                Googleによる情報の利用については、
+                <a
+                  href="https://policies.google.com/technologies/partner-sites?hl=ja"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mx-1 font-semibold text-red-400 underline decoration-red-400/40 underline-offset-4 transition-colors hover:text-red-300"
+                >
+                  Googleサービスを使用するサイトやアプリから収集した情報の利用
+                </a>
+                をご確認ください。計測を制限する場合は、
+                <a
+                  href="https://tools.google.com/dlpage/gaoptout?hl=ja"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mx-1 font-semibold text-red-400 underline decoration-red-400/40 underline-offset-4 transition-colors hover:text-red-300"
+                >
+                  Google Analyticsオプトアウトアドオン
+                </a>
+                も利用できます。
+              </p>
+            </div>
           </section>
 
           <section aria-labelledby="disclaimer-heading">

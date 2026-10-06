@@ -221,6 +221,7 @@ export const translations: Record<Language, TranslationDictionary> = {
             paragraphs: [
               "本サービスは、認証にGoogle Firebase Authentication、ホスティングやデータ保存にCloudflareおよびCloudflare D1を利用します。また、広告、アクセス解析、決済等を導入する場合は、その提供事業者へ必要最小限の情報が送信されることがあります。",
               "これらの事業者は、それぞれのプライバシーポリシーおよび契約条件に基づいて情報を処理します。利用者はGoogleアカウントの設定から、本サービスに付与したアクセス権を確認または取り消すことができます。",
+              "本サービスは、アクセス状況の把握とサービス改善のためGoogle Analytics 4を利用します。公開環境変数に有効なMeasurement IDが設定された場合、Google tagがページビュー、セッション、流入元、端末・ブラウザ情報、IPアドレスから推定される地域等をGoogleへ送信します。Google AnalyticsはCookie等を使用することがあります。PomoTM独自のカスタムイベントは実装していません。",
             ],
           },
           {
@@ -240,6 +241,7 @@ export const translations: Record<Language, TranslationDictionary> = {
             title: "6. 利用者の選択と削除",
             paragraphs: [
               "利用者はGoogleアカウント側で連携解除を行えます。アカウント情報の確認、訂正、削除その他の請求については、本サービスまたは配布ページに掲示する問い合わせ窓口から申請できます。法令または不正防止上必要な情報は、一定期間保持する場合があります。",
+              "Google Analyticsによる計測は、ブラウザ設定またはGoogle Analyticsオプトアウトアドオンで制限できます。",
             ],
           },
           {
@@ -415,6 +417,7 @@ export const translations: Record<Language, TranslationDictionary> = {
             paragraphs: [
               "The Service uses Google Firebase Authentication for identity services and Cloudflare, including Cloudflare D1, for hosting or data storage. If advertising, analytics, or payment features are enabled, the relevant provider may receive the minimum information needed to provide that feature.",
               "Each provider processes information under its own privacy policy and contractual terms. You can review or revoke access granted to the Service through your Google Account settings.",
+              "The Service uses Google Analytics 4 to understand access and improve the Service. When a valid Measurement ID is configured in the public environment variable, the Google tag sends page views, sessions, traffic sources, device and browser information, and approximate region inferred from the IP address to Google. Google Analytics may use cookies and similar technologies. No PomoTM-specific custom events are implemented.",
             ],
           },
           {
@@ -434,6 +437,7 @@ export const translations: Record<Language, TranslationDictionary> = {
             title: "6. Your Choices and Deletion",
             paragraphs: [
               "You can revoke Google access from your Google Account. Requests to access, correct, or delete account information may be submitted through the contact method published in the Service or on its distribution page. Some information may be retained where required by law or reasonably necessary to prevent abuse.",
+              "Google Analytics measurement can be limited through browser settings or the Google Analytics opt-out browser add-on.",
             ],
           },
           {
