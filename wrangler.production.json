@@ -1,7 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "pomo-tm",
+  "account_id": "fd3330ae75a239cf46dd8f3fd36a5e4c",
   "compatibility_date": "2026-09-21",
+  "workers_dev": false,
   "assets": {
     "directory": "./out"
   },

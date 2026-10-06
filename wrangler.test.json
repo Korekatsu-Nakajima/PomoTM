@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pomo-tm-frontend-test",
+  "account_id": "fd3330ae75a239cf46dd8f3fd36a5e4c",
+  "compatibility_date": "2026-09-21",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./out"
+  },
+  "d1_databases": [
+    {
+      "binding": "pomo_db_test",
+      "database_name": "pomo-db-test",
+      "database_id": "609f10e6-d313-427b-ab63-909072088abe",
+      "remote": true
+    }
+  ]
+}

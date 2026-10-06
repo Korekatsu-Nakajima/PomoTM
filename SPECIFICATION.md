@@ -1,6 +1,6 @@
 # プロジェクト仕様書
 
-最終コード確認日: 2026-09-19
+最終コード・設定確認日: 2026-10-06
 
 本書は、PomoTM / Tomato Focus の現在のリポジトリ実装を将来の開発者およびAIへ共有し、デグレードや過去仕様への先祖返りを防止するための基準文書である。会話履歴や過去の要件ではなく、現在のソースコードを正として記載している。
 
@@ -311,13 +311,15 @@
 
 - Cloudflareへの本番配備方式はNext.js static exportとし、`next.config.ts`の `output: "export"` により `npm run build` がルートの `out` ディレクトリを生成する。
 - Cloudflare AssetsではNext.js Image Optimization serverを使用しないため、`next.config.ts`の `images.unoptimized` をtrueに固定する。
-- 正規のCloudflare設定はルートの `wrangler.json`。Worker名は `pomo-tm`、compatibility dateは `2026-09-21`、assets directoryは `./out` とする。静的assets-only配備のためWorker scriptの `main` は指定しない。
-- `wrangler.json` のCustom Domainは `pomotm.com` と `www.pomotm.com`。両routeを `custom_domain: true` として静的Assets Worker `pomo-tm`へ接続する。
+- Production frontendの正規Cloudflare設定は `wrangler.production.json`。Worker名は `pomo-tm`、Account Aを明示し、`workers_dev: false`、compatibility dateは `2026-09-21`、assets directoryは `./out` とする。静的assets-only配備のためWorker scriptの `main` は指定せず、D1／KV／R2／Queue／Service／Durable Object bindingおよびvars／secretsを定義しない。
+- `wrangler.production.json` のCustom Domainは `pomotm.com` と `www.pomotm.com`。両routeを `custom_domain: true` として静的Assets Worker `pomo-tm`へ接続する。
+- frontend Test専用設定は `wrangler.test.json`。Productionとは異なるWorker名 `pomo-tm-frontend-test`、`workers_dev: true`、`./out` assets、test database `pomo-db-test`への `pomo_db_test` bindingを持ち、Production Custom Domainを定義しない。このWorker名はrepository上のdeploy targetであり、実際のCloudflare resourceの存在や配備状態を示さない。
 - Metadata Routeの `/manifest.webmanifest` は `src/app/manifest.ts` の `dynamic = "force-static"` により静的export対象とする。
-- `npm run deploy` は先に `npm run build`を完了し、その後 `wrangler deploy --config wrangler.json` を実行する。Wranglerを直接実行する場合も `wrangler.json` を明示し、旧OpenNext設定を参照させない。
-- `npm run preview` も `npm run build`後に `wrangler dev --config wrangler.json` を実行し、本番と同じ静的Assets設定を使用する。
+- `npm run deploy` は `npm run deploy:production` へ委譲し、build後に `wrangler deploy --config wrangler.production.json` を実行する。Production frontendのdeploy／dry-runでconfig指定を省略してはならない。
+- `npm run preview` は `npm run preview:test` へ委譲し、build後に `wrangler dev --config wrangler.test.json` を実行する。Test deployは `npm run deploy:test`、各configのbuild込みdry-runは `npm run deploy:production:dry-run` と `npm run deploy:test:dry-run` を使用する。
 - 旧OpenNext経路は `output: "export"` で生成される現在の`.next`に存在しないstandalone server manifestを要求し、実行不能かつ本番deployから未参照だったため削除済みとする。`wrangler.toml`、`open-next.config.ts`、OpenNext専用npm scriptsおよび依存パッケージを戻さない。
-- 静的ゲーム配信用 `pomo-tm` はD1 bindingやStripe Secretを持たず、ルート `wrangler.json` にD1 bindingを追加しない。Stripe連携は `workers/stripe-api/wrangler.jsonc` の別Worker `pomo-tm-stripe-api`へ分離し、D1 binding `DB` は実DBを確認後にCloudflare Dashboardで設定する。
+- 2026-10-06のrepository変更で、曖昧なdefault configを残さないためルート `wrangler.json` は廃止し、上記2configへ分離した。これはrepository deploy入力の安全化だけであり、Productionへのdeploy、binding変更、runtime確認を意味しない。
+- 静的ゲーム配信用 `pomo-tm` はD1 bindingやStripe Secretを持たない。Test D1 bindingをProduction configへ追加しない。Stripe連携は `workers/stripe-api/wrangler.jsonc` の別Worker `pomo-tm-stripe-api`へ分離し、D1 binding `DB` は実DBを確認後にCloudflare Dashboardで設定する。
 - 現在のクライアントアプリは静的export可能な構成を維持する。Server Actions、リクエスト依存の動的Route Handler、SSR必須APIを追加する場合は、静的配備との互換性を事前に再評価する。
 - Stripe Workerは `/checkout`、`/premium`、`/webhook` だけを公開する。前2つは完全一致CORS origin、Firebase ID token、Firebase App Check tokenを必須とし、Webhookは生bodyと `Stripe-Signature` をHMAC SHA-256で検証する。
 - `/checkout` はサーバー設定済みPriceだけを使用し、実際にactive・JPY・240円・月額であることをStripe APIで再検証する。クライアントからPrice IDや金額を受け取らない。
@@ -559,8 +561,9 @@
 | `.env.example` | Firebase公開設定、Premium API公開URL、Stripe Workerのsecret／variable名だけを示すプレースホルダー |
 | `SECURITY.md` | 現在の通信境界、App CheckとConsole設定、コスト・quotaリスク、将来APIの必須防御 |
 | `next.config.ts` | 開発オリジン許可、`output: "export"` による静的 `out` 生成 |
-| `wrangler.json` | `pomo-tm` の静的Assets設定。配信元は `./out` |
-| `package.json` | Next.js static build後に `wrangler.json` を明示するpreview／本番deployの実行順序 |
+| `wrangler.production.json` | Production frontend `pomo-tm` の静的Assets・Custom Domainを定義するD1 bindingなしの明示的deploy入力 |
+| `wrangler.test.json` | Productionと異なるTest Worker名、workers.dev、test D1 bindingを定義し、Production Custom Domainを持たないfrontend Test入力 |
+| `package.json` | Next.js static build後にProduction／TestそれぞれのWrangler configを明示するpreview／deploy／dry-runの実行順序 |
 
 ### 4.3 コンポーネント間のデータフロー
 
@@ -637,9 +640,9 @@ page.tsx
 - `npx tsc --noEmit` が成功すること。
 - `npm run build` で `/`、`/privacy`、`/terms` が生成されること。
 - `npm run build` で `out` が生成され、`out/index.html`、`out/privacy.html`、`out/terms.html`、`out/manifest.webmanifest` が存在すること。
-- `npx wrangler deploy --dry-run --config wrangler.json` が `./out` のassetsを読み込み、entry-pointまたはassets directory missingを報告しないこと。
+- `npm run deploy:production:dry-run` と `npm run deploy:test:dry-run` が各configから `./out` のassetsを読み込み、entry-pointまたはassets directory missingを報告しないこと。
 - `npm run stripe-worker:dry-run` がStripe専用Workerをsecret実値なしでbundleできること。
-- `wrangler.json` のCustom Domainが `pomotm.com` と `www.pomotm.com` の2件で、どちらも `custom_domain: true` であること。
+- `wrangler.production.json` だけが `pomotm.com` と `www.pomotm.com` のCustom Domainを持ち、D1 bindingを持たないこと。`wrangler.test.json` はTest D1 bindingだけを持ち、Production Custom Domainを持たないこと。
 - Focus/Break/Pause/Reset/Spaceキー、Reward分岐、Bonus Break終了リセットを確認すること。
 - Matter.jsがタイマー停止中とページ非表示中にも更新されること。
 - 320px程度の狭い画面でツールバーが親幅を押し広げず、横スワイプでき、スクロールバーが見えないこと。

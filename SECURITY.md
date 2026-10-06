@@ -1,12 +1,12 @@
 # PomoTM セキュリティ運用方針
 
-最終確認日: 2026-09-22
+最終コード・設定確認日: 2026-10-06
 
 ## 1. 現在の構成と通信境界
 
-- 本番配備はNext.js static exportで生成した `out` をCloudflare Assetsから配信する。正規設定は `wrangler.json`、Worker名は `pomo-tm` である。
+- 本番配備はNext.js static exportで生成した `out` をCloudflare Assetsから配信する。正規設定はD1 bindingを持たない `wrangler.production.json`、Worker名は `pomo-tm` である。Test専用の `wrangler.test.json` は別Worker名、workers.dev、test D1 bindingを使用し、Production Custom Domainを持たない。
 - `src/app` に独自 `/api/*` Route HandlerやServer Actionsを追加せず、static exportを維持する。Stripe処理だけを別Worker `pomo-tm-stripe-api`へ分離する。
-- クライアント実行コードはD1 binding、`getCloudflareContext()`、D1クエリを使用しない。Stripe専用WorkerだけがCloudflare Dashboardで設定されたD1 binding `DB`へ接続する。
+- クライアント実行コードはD1 binding、`getCloudflareContext()`、D1クエリを使用しない。Stripe専用WorkerだけがCloudflare Dashboardで設定されたD1 binding `DB`へ接続する。frontend Testの `pomo_db_test` bindingは `wrangler.test.json` にだけ定義し、Production deploy／dry-runは必ず `wrangler.production.json` を明示する。config指定を省略したfrontend deployを実行してはならない。
 - 認証通信はFirebase Web SDKによるFirebase Authenticationへの直接通信である。Google popup、メール／パスワードログイン、登録、確認メール送信、ユーザー再読込を利用する。
 - Premium購入・状態確認時だけ、静的クライアントは公開設定 `NEXT_PUBLIC_PREMIUM_API_BASE_URL` の `/checkout` / `/premium` を `fetch` する。Firebase ID tokenとApp Check tokenはAuthorization用に送るが、localStorageへ独自保存しない。
 - 現在、Cloudflare DashboardのRate Limiting設定済みとは判定しない。UIのボタン無効化、確認メール再送の60秒cooldown、localStorage値はセキュリティ上のRate Limitとして扱わない。
@@ -105,7 +105,7 @@ Firebase Authentication、App Check、reCAPTCHA Enterprise、Cloudflareの最新
 - App Check metricsで正規のGoogle／メール認証リクエストがVerifiedになっている。
 - enforcement前後でGoogle login、メールlogin、登録、確認メール、60秒再送cooldown、logoutを実機確認している。
 - Authorized domains、email enumeration protection、Identity Toolkit quota、billing budget alertをConsoleで確認している。
-- 静的配備は `wrangler.json` のAssets構成を維持し、Stripe専用WorkerへだけD1 bindingとsecretを設定している。
+- 静的配備前に `wrangler.production.json` のWorker、Account、assets、Custom Domain、bindingsをdry-runでレビューし、D1／KV／R2／Queue／Service／Durable Object bindingおよび不要なvars／secretsがないことを確認する。`wrangler.test.json` をProduction deployへ使用しない。
 - 本番D1 schemaを取得し、`migrations/0001_stripe_webhook_events.sql`との差分をレビューしてから適用している。
 - Stripe test modeでCheckout、cancel、署名検証、event再送、active、past_due、canceled、期限切れを確認している。
 - `/checkout` と `/premium` へCloudflare Rate Limiting、WAF、監視、request/error alertを設定している。
