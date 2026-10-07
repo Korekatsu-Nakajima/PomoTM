@@ -4,7 +4,10 @@ out/
 .env*.local
 .env.local
 .env
+.env.production
 .env.example
+.env.test
+.env.development.local
 !.env.example
 .dev.vars
 **/.dev.vars
