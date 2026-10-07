@@ -7,6 +7,7 @@ import { appCheck } from "@/lib/firebase";
 export type PremiumStatus = {
   isPremium: boolean;
   premiumUntil: string | null;
+  cancelAtPeriodEnd: boolean;
 };
 
 type CheckoutResponse = {
@@ -84,12 +85,36 @@ export async function fetchPremiumStatus(user: User): Promise<PremiumStatus> {
   const payload: unknown = await response.json();
   if (!isRecord(payload)
     || typeof payload.isPremium !== "boolean"
-    || !(typeof payload.premiumUntil === "string" || payload.premiumUntil === null)) {
+    || !(typeof payload.premiumUntil === "string" || payload.premiumUntil === null)
+    || !(typeof payload.cancelAtPeriodEnd === "boolean" || payload.cancelAtPeriodEnd === undefined)) {
     throw new PremiumApiError("invalid_premium_response", "Premium API returned an invalid response.");
   }
   return {
     isPremium: payload.isPremium,
     premiumUntil: payload.premiumUntil,
+    cancelAtPeriodEnd: payload.cancelAtPeriodEnd === true,
+  };
+}
+
+export async function cancelPremiumSubscription(user: User): Promise<PremiumStatus> {
+  const headers = await createAuthenticatedHeaders(user);
+  const response = await fetch(`${premiumApiBaseUrl}/premium/cancel`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) throw await readApiError(response);
+  const payload: unknown = await response.json();
+  if (!isRecord(payload)
+    || payload.isPremium !== true
+    || !(typeof payload.premiumUntil === "string" || payload.premiumUntil === null)
+    || payload.cancelAtPeriodEnd !== true) {
+    throw new PremiumApiError("invalid_cancellation_response", "Premium API returned an invalid cancellation response.");
+  }
+  return {
+    isPremium: true,
+    premiumUntil: payload.premiumUntil,
+    cancelAtPeriodEnd: true,
   };
 }
 

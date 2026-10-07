@@ -95,8 +95,17 @@ type StripeEvent = {
 };
 
 type SubscriptionRow = {
+  id: string;
   status: string;
+  stripe_customer_id: string | null;
+  cancel_at_period_end: number;
   current_period_end: string | null;
+};
+
+type PremiumStatusResponse = {
+  isPremium: boolean;
+  premiumUntil: string | null;
+  cancelAtPeriodEnd: boolean;
 };
 
 const APP_CHECK_JWKS_URL = "https://firebaseappcheck.googleapis.com/v1/jwks";
@@ -353,9 +362,9 @@ function hasActivePremium(row: SubscriptionRow | null): boolean {
   return Number.isFinite(periodEnd) && periodEnd > Date.now();
 }
 
-async function getPremiumStatus(database: D1Database, userId: string): Promise<{ isPremium: boolean; premiumUntil: string | null }> {
+async function getPremiumStatus(database: D1Database, userId: string): Promise<PremiumStatusResponse> {
   const row = await database.prepare(`
-    SELECT status, current_period_end
+    SELECT id, status, stripe_customer_id, cancel_at_period_end, current_period_end
     FROM subscriptions
     WHERE user_id = ?
     ORDER BY current_period_end DESC, updated_at DESC
@@ -363,6 +372,7 @@ async function getPremiumStatus(database: D1Database, userId: string): Promise<{
   `).bind(userId).first<SubscriptionRow>();
   const isPremium = hasActivePremium(row);
   const premiumUntil = isPremium ? row?.current_period_end ?? null : null;
+  const cancelAtPeriodEnd = isPremium && row?.cancel_at_period_end === 1;
   if (!isPremium) {
     await database.prepare(`
       UPDATE users
@@ -370,7 +380,7 @@ async function getPremiumStatus(database: D1Database, userId: string): Promise<{
       WHERE id = ? AND is_premium <> 0
     `).bind(userId).run();
   }
-  return { isPremium, premiumUntil };
+  return { isPremium, premiumUntil, cancelAtPeriodEnd };
 }
 
 async function handleCheckout(request: Request, env: Env, origin: string): Promise<Response> {
@@ -420,6 +430,100 @@ async function handlePremiumStatus(request: Request, env: Env, origin: string): 
   await upsertUser(database, user);
   const status = await getPremiumStatus(database, user.uid);
   return jsonResponse(status, 200, origin);
+}
+
+async function handlePremiumCancellation(request: Request, env: Env, origin: string): Promise<Response> {
+  if (request.headers.get("Content-Type")?.split(";", 1)[0] !== "application/json") {
+    throw new HttpError(415, "unsupported_media_type", "Content-Type must be application/json.");
+  }
+  const bodyText = await request.text();
+  if (bodyText.length > 32) throw new HttpError(413, "request_too_large", "Request body is too large.");
+
+  const user = await authenticate(request, env);
+  const database = requireDatabase(env);
+  await upsertUser(database, user);
+  const row = await database.prepare(`
+    SELECT id, status, stripe_customer_id, cancel_at_period_end, current_period_end
+    FROM subscriptions
+    WHERE user_id = ?
+    ORDER BY current_period_end DESC, updated_at DESC
+    LIMIT 1
+  `).bind(user.uid).first<SubscriptionRow>();
+  if (!row) throw new HttpError(404, "premium_subscription_not_found", "Premium subscription was not found.");
+  if (!hasActivePremium(row)) throw new HttpError(409, "premium_not_active", "Premium subscription is not active.");
+  if (!row.stripe_customer_id) {
+    throw new HttpError(409, "premium_subscription_invalid", "Premium subscription has no Stripe Customer.");
+  }
+
+  let subscription = await stripeRequest<StripeSubscription>(
+    env,
+    `/subscriptions/${encodeURIComponent(row.id)}`,
+  );
+  const customerId = stripeObjectId(subscription.customer);
+  const configuredPriceId = requireEnvValue(env.STRIPE_PRICE_ID_PREMIUM_MONTHLY, "STRIPE_PRICE_ID_PREMIUM_MONTHLY");
+  if (subscription.id !== row.id
+    || customerId !== row.stripe_customer_id
+    || subscription.metadata?.firebase_uid !== user.uid
+    || getSubscriptionPriceId(subscription) !== configuredPriceId) {
+    throw new HttpError(403, "subscription_ownership_mismatch", "Subscription ownership could not be verified.");
+  }
+
+  if (!subscription.cancel_at_period_end) {
+    const params = new URLSearchParams({ cancel_at_period_end: "true" });
+    subscription = await stripeRequest<StripeSubscription>(env, `/subscriptions/${encodeURIComponent(row.id)}`, {
+      method: "POST",
+      body: params,
+    });
+  }
+
+  const updatedCustomerId = stripeObjectId(subscription.customer);
+  const period = getSubscriptionPeriod(subscription);
+  const premiumUntilTime = Date.parse(period.end ?? "");
+  if (subscription.id !== row.id
+    || updatedCustomerId !== row.stripe_customer_id
+    || subscription.metadata?.firebase_uid !== user.uid
+    || subscription.cancel_at_period_end !== true
+    || !PREMIUM_STATUSES.has(subscription.status)
+    || !Number.isFinite(premiumUntilTime)
+    || premiumUntilTime <= Date.now()) {
+    throw new HttpError(502, "invalid_cancellation_response", "Stripe did not confirm period-end cancellation.");
+  }
+
+  const canceledAt = subscription.canceled_at
+    ? new Date(subscription.canceled_at * 1_000).toISOString()
+    : null;
+  await database.batch([
+    database.prepare(`
+      UPDATE subscriptions
+      SET status = ?, price_id = ?, cancel_at_period_end = 1,
+          current_period_start = ?, current_period_end = ?, canceled_at = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ? AND stripe_customer_id = ?
+    `).bind(
+      subscription.status,
+      getSubscriptionPriceId(subscription),
+      period.start,
+      period.end,
+      canceledAt,
+      row.id,
+      user.uid,
+      row.stripe_customer_id,
+    ),
+    database.prepare(`
+      UPDATE users
+      SET is_premium = 1, premium_until = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(period.end, user.uid),
+  ]);
+
+  const synchronizedStatus = await getPremiumStatus(database, user.uid);
+  if (!synchronizedStatus.isPremium
+    || !synchronizedStatus.cancelAtPeriodEnd
+    || synchronizedStatus.premiumUntil !== period.end) {
+    throw new HttpError(502, "cancellation_state_sync_failed", "Premium cancellation state could not be synchronized.");
+  }
+
+  return jsonResponse(synchronizedStatus, 200, origin);
 }
 
 function hexToBytes(value: string): Uint8Array | null {
@@ -619,6 +723,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   const origin = getAllowedOrigin(request, env);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(origin) });
   if (url.pathname === "/checkout" && request.method === "POST") return handleCheckout(request, env, origin);
+  if (url.pathname === "/premium/cancel" && request.method === "POST") return handlePremiumCancellation(request, env, origin);
   if (url.pathname === "/premium" && request.method === "GET") return handlePremiumStatus(request, env, origin);
   throw new HttpError(404, "not_found", "Not found.");
 }

@@ -252,8 +252,10 @@
 - プレミアム案内は白とごく淡いemeraldを基調に、Focusでは輪郭を明瞭に、Breakではより柔らかい背景と影を使う。金色、王冠、ネオン、点滅・移動アニメーションは使用しない。
 - 「プレミアムにアップグレード」は `PremiumPlanCard` からStripe専用Cloudflare Workerの `/checkout` を呼び、Stripe-hosted Checkoutへ遷移する。Stripe API処理はShopやゲーム本体へ直接記述しない。
 - ゲストまたは未確認メールユーザーがCTAを押した場合は既存 `AuthModal` を開き、Checkoutを開始しない。ゲストとしてのタイマー・ゲーム利用は制限しない。
-- Checkout復帰の `checkout=success` は権限付与に使用せず、専用Workerの `/premium` を最大5回再取得する合図だけに使う。`checkout=cancel` はキャンセル表示だけを行う。いずれも処理後にqueryを除去する。
-- Premium状態はlocalStorageへ保存しない。現時点ではプレミアム状態を連続再生、広告、Break、Matter.js、タイマーへ接続せず、既存 `canUseAutoSwitch` の挙動も変更しない。
+- Checkout復帰の `checkout=success` は権限付与に使用せず、専用Workerの `/premium` を最大5回再取得する合図だけに使う。`checkout=cancel` はキャンセル表示だけを行う。処理済みqueryだけを除去する。
+- ProductionのPremium状態は、確認済みFirebase UserについてFirebase ID tokenとApp Check tokenを付けて取得した `/premium` 応答だけを根拠にする。URL、localStorage、任意のclient Stateを権限根拠にしない。認証済みユーザーの照会が未完了または失敗している間は広告資格を未確定として扱い、広告コンポーネントを生成しない。
+- `isPremium` は広告UI抑制、連続再生権限、Focus完了時のReward VideoなしBonus Break自動取得を制御する。`cancelAtPeriodEnd = true` でも `isPremium = true` かつ有効期限内は特典を維持する。
+- SettingsのPremiumユーザー導線から `/premium/cancel` を呼び、即時解約ではなくStripe Subscriptionの `cancel_at_period_end=true` を設定する。確認画面、送信中、成功、失敗を表示し、二重送信を防止する。契約期間終了まではPremiumを維持する。
 
 ### 1.13 永続化
 
@@ -321,10 +323,11 @@
 - 2026-10-06のrepository変更で、曖昧なdefault configを残さないためルート `wrangler.json` は廃止し、上記2configへ分離した。これはrepository deploy入力の安全化だけであり、Productionへのdeploy、binding変更、runtime確認を意味しない。
 - 静的ゲーム配信用 `pomo-tm` はD1 bindingやStripe Secretを持たない。Test D1 bindingをProduction configへ追加しない。Stripe連携は `workers/stripe-api/wrangler.jsonc` の別Worker `pomo-tm-stripe-api`へ分離し、D1 binding `DB` は実DBを確認後にCloudflare Dashboardで設定する。
 - 現在のクライアントアプリは静的export可能な構成を維持する。Server Actions、リクエスト依存の動的Route Handler、SSR必須APIを追加する場合は、静的配備との互換性を事前に再評価する。
-- Stripe Workerは `/checkout`、`/premium`、`/webhook` だけを公開する。前2つは完全一致CORS origin、Firebase ID token、Firebase App Check tokenを必須とし、Webhookは生bodyと `Stripe-Signature` をHMAC SHA-256で検証する。
+- Stripe Workerは `/checkout`、`/premium`、`/premium/cancel`、`/webhook` を公開する。Premiumの3 endpointは完全一致CORS origin、Firebase ID token、Firebase App Check tokenを必須とし、Webhookは生bodyと `Stripe-Signature` をHMAC SHA-256で検証する。
 - `/checkout` はサーバー設定済みPriceだけを使用し、実際にactive・JPY・240円・月額であることをStripe APIで再検証する。クライアントからPrice IDや金額を受け取らない。
 - Firebase UIDはStripe CustomerおよびSubscription metadataの `firebase_uid` に保存する。D1の `users.id` と `subscriptions.user_id` も同じUIDとし、クライアント指定user IDは使用しない。
 - Premiumの正規情報源はStripe Subscriptionを署名検証済みWebhookで同期したD1である。`active` / `trialing` かつ期間内だけPremiumとし、`past_due` / `canceled` / `unpaid` / `incomplete` / 期限切れはPremiumにしない。
+- `/premium/cancel` は認証済みUIDからD1のSubscriptionを検索し、Stripe側のSubscription ID、Customer、`metadata.firebase_uid`、Priceを再照合する。clientからUID、Customer ID、Subscription IDを受け取らず、既に期末解約済みの場合も同じ状態を返す。
 
 ## 2. UI / レイアウト仕様（崩してはいけない要素）
 
@@ -536,8 +539,9 @@
 | `src/app/privacy/page.tsx` | AdSense審査向けプライバシーポリシー |
 | `src/app/terms/page.tsx` | OAuth審査・直接参照向けの静的な利用規約ページ |
 | `src/components/ShopModal.tsx` | Shopの表示、標高3,000mによるBalloon/Rocket文言切替、消費型アイテムの所持数・使用UI、永久解放購入UI、PremiumPlanCardの配置 |
-| `src/components/PremiumPlanCard.tsx` | プレミアム案内、Firebase認証状態、AuthModal導線、Checkout開始、D1同期済みPremium状態表示 |
-| `src/components/SettingsModal.tsx` | 日本語／英語の選択UI、ゲーム音声ON/OFF、Firebase `onAuthStateChanged` 購読、ゲスト／ログイン済みアカウント表示、Googleプロフィール画像、Firebaseログアウト導線、Focus/Breakテーマ対応 |
+| `src/components/PremiumPlanCard.tsx` | プレミアム案内、Firebase認証状態、AuthModal導線、Checkout開始、検証済みPremium状態表示 |
+| `src/components/PremiumCancellationModal.tsx` | 期末解約の説明、確認、送信中、成功、失敗表示と二重送信防止 |
+| `src/components/SettingsModal.tsx` | 言語、音声、Firebaseアカウント表示、ログアウト、Premium状態、解約Modal導線、Focus/Breakテーマ対応 |
 | `src/components/AuthModal.tsx` | Firebase Googleポップアップ認証、メール／パスワードのログイン・新規登録、表示名更新、認証中・エラー表示 |
 | `src/components/TermsModal.tsx` | 日英利用規約のスクロール表示、Settingsへ戻る閉じる操作、Focus/Breakテーマ対応 |
 | `src/components/PrivacyModal.tsx` | 日英プライバシーポリシーのスクロール表示、Settingsへ戻る閉じる操作、Focus/Breakテーマ対応 |
@@ -552,11 +556,11 @@
 | `src/utils/translations.ts` | `ja` / `en` の対訳辞書、利用規約・プライバシーポリシー本文、言語型、`pomotm_lang` 保存キー、保存値検証 |
 | `src/lib/config.ts` | タイマー時間、供給間隔、基本World寸法などのアプリ設定 |
 | `src/lib/firebase.ts` | Firebase Web SDKの単一初期化、reCAPTCHA Enterprise App Checkのbrowser-only初期化、Firebase AuthおよびGoogleAuthProviderのexport、環境変数参照 |
-| `src/lib/premium.ts` | Firebase ID tokenとApp Check tokenを付けたPremium API client、型付き状態取得、Stripe Checkout URL検証 |
+| `src/lib/premium.ts` | Firebase ID tokenとApp Check tokenを付けたPremium API client、型付き状態取得、期末解約、Stripe Checkout URL検証 |
 | `src/types/db.ts` | D1のusers/accounts/sessions/rankings/user_items/subscriptions/webhook event行型、書込型、プレミアム判定ヘルパー |
 | `schema.sql` | Cloudflare D1の正規スキーマ、Subscription・Webhook冪等性を含む外部キー・制約・索引 |
 | `migrations/0001_stripe_webhook_events.sql` | 既存D1を確認後にレビュー・適用するStripe event時刻とWebhook冪等性テーブルの差分案 |
-| `workers/stripe-api/src/index.ts` | Stripe Checkout、Firebase/Auth App Check検証、Webhook署名検証、D1 Premium同期、状態取得API |
+| `workers/stripe-api/src/index.ts` | Stripe Checkout、Firebase/Auth App Check検証、Webhook署名検証、D1 Premium同期、状態取得・期末解約API |
 | `workers/stripe-api/wrangler.jsonc` | 静的配信と分離した `pomo-tm-stripe-api` Worker設定。実D1 ID・route・secretは含めない |
 | `.env.example` | Firebase公開設定、Premium API公開URL、Stripe Workerのsecret／variable名だけを示すプレースホルダー |
 | `SECURITY.md` | 現在の通信境界、App CheckとConsole設定、コスト・quotaリスク、将来APIの必須防御 |
@@ -613,11 +617,11 @@ page.tsx
 ## 4.6 タイマー連続モード・休憩リセット・アイテム獲得通知
 
 - 休憩モード中にリセット、または集中モードへ手動切替を行う場合は、現在の休憩時間とボーナスが失われることを確認するダイアログを表示し、承認後のみ実行する。
-- 自動切替は `canUseAutoSwitch` による権限ゲートを必ず通す。現在の既定プレミアム権限は有効だが、将来の課金判定ではこのフラグだけで無効化できる構造を維持する。
-- 自動切替が有効な場合、Focus完了時の動画選択モーダルを表示せず、そのままBreakを開始する。Break完了時も停止せず、そのままFocusと供給スケジュールを再開する。
+- 自動切替は `canUseAutoSwitch` による権限ゲートを必ず通す。`canUseAutoSwitch = isPremium` であり、Standardではfalse、Premiumではtrueとする。falseへ変化した場合は自動切替StateとRefを即座にOFFへ戻す。
+- PremiumのBonus Break自動取得と連続再生は別機能である。Premiumは連続再生のON/OFFにかかわらずFocus完了時にReward Videoを表示せずBonus Breakを開始する。連続再生がONの場合だけ、Break完了後も停止せずFocusと供給スケジュールを再開する。
 - Focus完了時のランダムアイテム抽選・インベントリへの1回限りの加算は、自動切替の有無にかかわらず維持する。`pendingItemRewardRef` と `itemRewardGrantedRef` による二重付与防止を変更しない。
 - アイテム獲得表示は操作を遮るモーダルではなく、自動消滅するトーストである。ズームインと発光を伴って表示し、1.5秒後にフェードを開始、2秒後に自動で閉じる。手動の開封・受取ボタンは表示しない。
-- 自動切替が無効な場合は従来どおり動画選択を表示する。動画完了時はBonus Break、スキップ時は通常Breakを開始し、どちらもアイテムトーストを表示する。
+- Standardでは従来どおり動画選択を表示する。動画完了時はBonus Break、スキップ時は通常Breakを開始し、どちらもアイテムトーストを表示する。Premiumでは動画選択を表示せず、Bonus Breakを自動取得して同じアイテムトーストを表示する。
 - Matter.jsの更新はタイマー・動画・トーストの状態に関係なく継続する。
 
 ## 4.7 Firebase Authentication連携

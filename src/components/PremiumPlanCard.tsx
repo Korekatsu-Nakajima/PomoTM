@@ -11,7 +11,10 @@ import { translations, type Language } from "@/utils/translations";
 type PremiumPlanCardProps = {
   isBreak: boolean;
   language: Language;
+  onPremiumStatusChange: (isPremium: boolean) => void;
 };
+
+type PremiumViewState = "idle" | "checking" | "standard" | "premium" | "error";
 
 function isVerifiedUser(user: User | null): user is User {
   if (!user) return false;
@@ -21,63 +24,71 @@ function isVerifiedUser(user: User | null): user is User {
   return !usesPasswordProvider || user.emailVerified;
 }
 
-export function PremiumPlanCard({ isBreak, language }: PremiumPlanCardProps) {
+export function PremiumPlanCard({ isBreak, language, onPremiumStatusChange }: PremiumPlanCardProps) {
   const t = translations[language];
   const [user, setUser] = useState<User | null>(() => auth?.currentUser ?? null);
   const [authOpen, setAuthOpen] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [startingCheckout, setStartingCheckout] = useState(false);
-  const [isPremium, setIsPremium] = useState(false);
+  const [premiumState, setPremiumState] = useState<PremiumViewState>("idle");
   const [premiumUntil, setPremiumUntil] = useState<string | null>(null);
+  const [cancelAtPeriodEnd, setCancelAtPeriodEnd] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const loadPremiumStatus = useCallback(async (currentUser: User) => {
-    setChecking(true);
+    setPremiumState("checking");
     try {
       const status = await fetchPremiumStatus(currentUser);
-      setIsPremium(status.isPremium);
+      setPremiumState(status.isPremium ? "premium" : "standard");
       setPremiumUntil(status.premiumUntil);
-      if (status.isPremium) setNotice(null);
+      setCancelAtPeriodEnd(status.cancelAtPeriodEnd);
+      setNotice(null);
+      onPremiumStatusChange(status.isPremium);
       return status.isPremium;
     } catch (error) {
+      setPremiumState("error");
+      setPremiumUntil(null);
+      setCancelAtPeriodEnd(false);
       setNotice(error instanceof PremiumApiError && error.code === "premium_not_configured"
         ? t.shop.premiumConfigurationMissing
         : t.shop.premiumStatusFailed);
       return false;
-    } finally {
-      setChecking(false);
     }
-  }, [t.shop.premiumConfigurationMissing, t.shop.premiumStatusFailed]);
+  }, [onPremiumStatusChange, t.shop.premiumConfigurationMissing, t.shop.premiumStatusFailed]);
 
   useEffect(() => {
     if (!auth) {
       setUser(null);
+      onPremiumStatusChange(false);
       return;
     }
     return onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       if (!isVerifiedUser(nextUser)) {
-        setIsPremium(false);
+        onPremiumStatusChange(false);
+        setPremiumState("idle");
         setPremiumUntil(null);
+        setCancelAtPeriodEnd(false);
+        setNotice(null);
+      } else {
+        setPremiumState("checking");
+        setPremiumUntil(null);
+        setCancelAtPeriodEnd(false);
+        setNotice(null);
       }
     });
-  }, []);
+  }, [onPremiumStatusChange]);
 
   useEffect(() => {
     if (!isVerifiedUser(user)) return;
     let disposed = false;
     const checkoutResult = new URLSearchParams(window.location.search).get("checkout");
-    if (checkoutResult === "cancel") setNotice(t.shop.premiumCheckoutCanceled);
 
     const refresh = async () => {
-      const attempts = checkoutResult === "success" ? 5 : 1;
-      if (checkoutResult === "success") setNotice(t.shop.premiumChecking);
-      for (let attempt = 0; attempt < attempts && !disposed; attempt += 1) {
-        const active = await loadPremiumStatus(user);
-        if (active || attempt === attempts - 1 || disposed) break;
-        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+      await loadPremiumStatus(user);
+      if (!disposed && checkoutResult === "cancel") {
+        setNotice(t.shop.premiumCheckoutCanceled);
       }
-      if (!disposed && (checkoutResult === "success" || checkoutResult === "cancel")) {
+      if (!disposed && checkoutResult === "cancel") {
         const url = new URL(window.location.href);
         url.searchParams.delete("checkout");
         window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
@@ -85,7 +96,7 @@ export function PremiumPlanCard({ isBreak, language }: PremiumPlanCardProps) {
     };
     void refresh();
     return () => { disposed = true; };
-  }, [loadPremiumStatus, t.shop.premiumCheckoutCanceled, t.shop.premiumChecking, user]);
+  }, [loadPremiumStatus, t.shop.premiumCheckoutCanceled, user]);
 
   const handleUpgrade = async () => {
     if (!isVerifiedUser(user)) {
@@ -93,6 +104,7 @@ export function PremiumPlanCard({ isBreak, language }: PremiumPlanCardProps) {
       setAuthOpen(true);
       return;
     }
+    if (premiumState !== "standard") return;
     setStartingCheckout(true);
     setNotice(null);
     try {
@@ -108,6 +120,10 @@ export function PremiumPlanCard({ isBreak, language }: PremiumPlanCardProps) {
   const formattedPremiumUntil = premiumUntil
     ? new Intl.DateTimeFormat(language === "ja" ? "ja-JP" : "en-US", { dateStyle: "medium" }).format(new Date(premiumUntil))
     : null;
+  const isPremium = premiumState === "premium";
+  const isChecking = premiumState === "checking"
+    || (isVerifiedUser(user) && premiumState === "idle");
+  const hasStatusError = premiumState === "error";
 
   return (
     <>
@@ -152,14 +168,18 @@ export function PremiumPlanCard({ isBreak, language }: PremiumPlanCardProps) {
         <button
           type="button"
           className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-default disabled:opacity-70"
-          disabled={checking || startingCheckout || isPremium}
+          disabled={isChecking || startingCheckout || isPremium || hasStatusError}
           onClick={() => void handleUpgrade()}
         >
           {isPremium
-            ? t.shop.premiumActive
-            : checking || startingCheckout
+            ? cancelAtPeriodEnd
+              ? t.settings.premiumCancelScheduled
+              : t.shop.premiumActive
+            : isChecking || startingCheckout
               ? t.shop.premiumChecking
-              : t.shop.premiumUpgrade}
+              : hasStatusError
+                ? t.shop.premiumStatusFailed
+                : t.shop.premiumUpgrade}
         </button>
         {isPremium && formattedPremiumUntil && (
           <p className="mt-2 text-center text-[11px] font-semibold text-emerald-800">

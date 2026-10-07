@@ -205,5 +205,6 @@ export type ShopModalProps = {
   onUseItem: (key: BuffKey) => void;
   onUnlockUfo: () => void;
   onUnlockOctopus: () => void;
+  onPremiumStatusChange: (isPremium: boolean) => void;
   isBreak: boolean;
 };

@@ -29,6 +29,9 @@ export type TranslationDictionary = {
     pause: string;
     reset: string;
     autoSwitch: string;
+    premiumFeatureTitle: string;
+    autoSwitchPremiumDescription: string;
+    close: string;
     debug: string;
     shop: string;
     openShop: string;
@@ -52,6 +55,23 @@ export type TranslationDictionary = {
     soundOn: string;
     soundOff: string;
     close: string;
+    premiumCancelLink: string;
+    premiumCancelScheduled: string;
+    premiumCancelTitle: string;
+    premiumCancelDescription: string;
+    premiumCancelAvailableUntil: string;
+    premiumCancelContinue: string;
+    premiumCancelConfirmTitle: string;
+    premiumCancelConfirmDescription: string;
+    premiumCancelBack: string;
+    premiumCancelConfirm: string;
+    premiumCancelProcessing: string;
+    premiumCancelSuccessTitle: string;
+    premiumCancelSuccessDescription: string;
+    premiumCancelClose: string;
+    premiumCancelLoginRequired: string;
+    premiumCancelNotActive: string;
+    premiumCancelFailed: string;
   };
   legal: {
     termsLink: string;
@@ -114,6 +134,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       pause: "一時停止",
       reset: "リセット",
       autoSwitch: "自動切り替え",
+      premiumFeatureTitle: "プレミアム限定機能",
+      autoSwitchPremiumDescription: "連続再生はPremiumプラン限定の機能です。",
+      close: "閉じる",
       debug: "デバッグ",
       shop: "アイテム管理",
       openShop: "アイテム管理を開く",
@@ -137,6 +160,23 @@ export const translations: Record<Language, TranslationDictionary> = {
       soundOn: "ON",
       soundOff: "OFF",
       close: "設定を閉じる",
+      premiumCancelLink: "Premiumを解約",
+      premiumCancelScheduled: "次回更新なし",
+      premiumCancelTitle: "Premiumを解約",
+      premiumCancelDescription: "解約しても、現在のお支払い期間が終了するまではPremium機能をご利用いただけます。",
+      premiumCancelAvailableUntil: "解約後も{date}までPremium機能をご利用いただけます。",
+      premiumCancelContinue: "解約内容を確認",
+      premiumCancelConfirmTitle: "Premiumを解約しますか？",
+      premiumCancelConfirmDescription: "現在の契約期間終了まではPremiumをご利用いただけます。次回の自動更新は行われません。",
+      premiumCancelBack: "戻る",
+      premiumCancelConfirm: "Premiumを解約する",
+      premiumCancelProcessing: "解約処理中…",
+      premiumCancelSuccessTitle: "Premiumの自動更新を停止しました。",
+      premiumCancelSuccessDescription: "現在のPremium機能は{date}までご利用いただけます。",
+      premiumCancelClose: "閉じる",
+      premiumCancelLoginRequired: "Premiumを解約するにはログインが必要です。",
+      premiumCancelNotActive: "有効なPremium契約を確認できませんでした。",
+      premiumCancelFailed: "Premiumの解約処理を完了できませんでした。時間をおいてもう一度お試しください。",
     },
     legal: {
       termsLink: "利用規約",
@@ -310,6 +350,9 @@ export const translations: Record<Language, TranslationDictionary> = {
       pause: "Pause",
       reset: "Reset",
       autoSwitch: "Auto Switch",
+      premiumFeatureTitle: "Premium feature",
+      autoSwitchPremiumDescription: "Continuous playback is available with the Premium plan.",
+      close: "Close",
       debug: "Debug",
       shop: "Item Shop",
       openShop: "Open Item Shop",
@@ -333,6 +376,23 @@ export const translations: Record<Language, TranslationDictionary> = {
       soundOn: "ON",
       soundOff: "OFF",
       close: "Close Settings",
+      premiumCancelLink: "Cancel Premium",
+      premiumCancelScheduled: "No further renewals",
+      premiumCancelTitle: "Cancel Premium",
+      premiumCancelDescription: "You can continue using Premium until the end of your current billing period after cancellation.",
+      premiumCancelAvailableUntil: "You can continue using Premium until {date} after cancellation.",
+      premiumCancelContinue: "Review cancellation",
+      premiumCancelConfirmTitle: "Cancel Premium?",
+      premiumCancelConfirmDescription: "Premium remains available until the end of your current billing period. Your subscription will not renew automatically.",
+      premiumCancelBack: "Back",
+      premiumCancelConfirm: "Cancel Premium",
+      premiumCancelProcessing: "Canceling…",
+      premiumCancelSuccessTitle: "Premium auto-renewal has been stopped.",
+      premiumCancelSuccessDescription: "You can continue using Premium until {date}.",
+      premiumCancelClose: "Close",
+      premiumCancelLoginRequired: "Sign in to cancel Premium.",
+      premiumCancelNotActive: "An active Premium subscription could not be found.",
+      premiumCancelFailed: "Premium could not be canceled. Please try again later.",
     },
     legal: {
       termsLink: "Terms of Service",

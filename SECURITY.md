@@ -8,7 +8,8 @@
 - `src/app` に独自 `/api/*` Route HandlerやServer Actionsを追加せず、static exportを維持する。Stripe処理だけを別Worker `pomo-tm-stripe-api`へ分離する。
 - クライアント実行コードはD1 binding、`getCloudflareContext()`、D1クエリを使用しない。Stripe専用WorkerだけがCloudflare Dashboardで設定されたD1 binding `DB`へ接続する。frontend Testの `pomo_db_test` bindingは `wrangler.test.json` にだけ定義し、Production deploy／dry-runは必ず `wrangler.production.json` を明示する。config指定を省略したfrontend deployを実行してはならない。
 - 認証通信はFirebase Web SDKによるFirebase Authenticationへの直接通信である。Google popup、メール／パスワードログイン、登録、確認メール送信、ユーザー再読込を利用する。
-- Premium購入・状態確認時だけ、静的クライアントは公開設定 `NEXT_PUBLIC_PREMIUM_API_BASE_URL` の `/checkout` / `/premium` を `fetch` する。Firebase ID tokenとApp Check tokenはAuthorization用に送るが、localStorageへ独自保存しない。
+- Premium購入・状態確認・期末解約予約時だけ、静的クライアントは公開設定 `NEXT_PUBLIC_PREMIUM_API_BASE_URL` の `/checkout` / `/premium` / `/premium/cancel` を `fetch` する。Firebase ID tokenとApp Check tokenはAuthorization用に送るが、localStorageへ独自保存しない。
+- `GET /premium` はHTTP methodだけを理由にREAD-ONLY監査へ使用しない。現在のWorker実装はユーザー行のupsertと、期限切れ時のPremium状態クリアを行い得る。`POST /checkout`、`POST /premium/cancel`、`POST /webhook` もD1または外部サービスを変更し得る。
 - `NEXT_PUBLIC_GA_MEASUREMENT_ID` に有効な公開Measurement IDが設定されたbuildは、Root LayoutからGoogle Analytics 4のGoogle tagを一度だけ読み込み、標準アクセス解析データをGoogleへ送信する。Measurement IDは公開識別子でありsecretではないが、PomoTM独自イベント、Firebase ID token、App Check token、Firebase UID、メールアドレス、ゲームデータをGA4へ送信しない。
 - 現在、Cloudflare DashboardのRate Limiting設定済みとは判定しない。UIのボタン無効化、確認メール再送の60秒cooldown、localStorage値はセキュリティ上のRate Limitとして扱わない。
 
@@ -59,13 +60,47 @@ Identity PlatformのApp Check連携は公式資料上Pre-GA条件が示される
 
 ## 3. Cloudflare側の防御
 
-静的Assets Worker `pomo-tm` は従来どおり `./out` だけを配信する。Stripe専用Worker `pomo-tm-stripe-api` は `/checkout`、`/premium`、`/webhook`だけを公開し、静的配信のroute・custom domain・D1非接続状態を変更しない。
+静的Assets Worker `pomo-tm` は `./out` だけを配信する。Stripe専用Worker `pomo-tm-stripe-api` は `/checkout`、`/premium`、`/premium/cancel`、`/webhook`を公開し、静的配信のroute・custom domain・D1非接続状態を変更しない。実契約を使う認証済み解約E2Eは未実施である。
 
-- `/checkout` と `/premium` は完全一致CORS origin、Firebase Authentication、Firebase App Checkをすべて検証する。
+- `/checkout`、`/premium`、`/premium/cancel` は完全一致CORS origin、Firebase Authentication、Firebase App Checkをすべて検証する。
 - `/checkout` はクライアントから金額・Price ID・UIDを受け取らず、Worker環境のPriceをStripe APIでJPY 240円・月額として再検証する。
 - `/webhook` はraw body、`Stripe-Signature`、Worker secretを使うHMAC SHA-256検証に成功したeventだけを処理する。
 - D1の `stripe_webhook_events` でevent IDを冪等化し、`stripe_event_created` で古いeventによる状態の先祖返りを防止する。
 - Premiumは `active` / `trialing` かつ有効期限内だけtrueとし、success URL、React State、localStorageだけでは付与しない。
+- `/premium/cancel` は認証済みUIDをD1検索キーにし、client指定のUID、Customer ID、Subscription IDを受け取らない。Stripe SubscriptionのCustomer、`metadata.firebase_uid`、Priceを再照合し、即時削除ではなく `cancel_at_period_end=true` の期末解約だけを行う。多重要求でも既に予約済みなら同じ状態を返す。
+
+### 3.1 Premium entitlementの信頼境界
+
+ProductionのPremium entitlementは次の検証経路だけを正規経路とする。
+
+```text
+Firebase Authentication User
+↓
+Firebase ID Token + Firebase App Check Token
+↓
+GET /premium
+↓
+PremiumStatus
+↓
+verifiedPremiumAccess
+↓
+isPremium
+```
+
+- クライアントは確認済みFirebase UserについてだけPremium APIを呼び、Firebase ID Tokenを `Authorization: Bearer`、App Check Tokenを `X-Firebase-AppCheck` で送る。Workerは両方を検証し、片方だけでは許可しない。
+- Productionの `verifiedPremiumAccess` はPremium APIが返した `PremiumStatus.isPremium` から更新する。Checkoutのsuccess URLは再取得の合図であり、権限付与の根拠ではない。
+- URLパラメータ、localStorage、sessionStorage、任意のclient-side State、手動の `isPremium = true`、未検証のStripe Checkout結果をProduction entitlementの根拠にしてはならない。
+- `isPremium` は広告UI抑制、連続再生権限、Focus完了時のBonus Break自動取得を制御するクライアントUI権限である。サーバー側操作は毎回TokenとD1上のSubscription状態を検証する。
+- Premium APIの `isPremium`、`premiumUntil`、`cancelAtPeriodEnd` を現在状態として扱う。`cancelAtPeriodEnd = true` は期末解約予定であり、`isPremium = true` かつ有効期限内である間はPremium特典を維持する。
+- 認証済みユーザーのPremium API照会が完了するまでは広告資格を未確定として扱い、広告コンポーネントをrenderしない。照会失敗をStandard確定として広告配信へフォールバックしない。
+
+### 3.2 DevelopmentとBonus Breakの境界
+
+- Developmentには `IS_DEVELOPMENT` 配下の `devPremiumState` でStandard / Premium UIを検証するDEV Premium Debugが存在する。これはProduction entitlementとは別の検証機構であり、Productionの契約状態、D1、Stripe Subscriptionを変更しない。
+- DEV Premium Debugの挙動をProductionへ持ち込まず、Production buildでURLパラメータ、Storage、任意Stateによる代替判定を追加しない。
+- `isBonusBreakMode` はPremium entitlementではなく、現在のBreakセッションに対するゲームモードStateである。Standardは5秒の疑似Reward Video完了によりBonus Breakを取得でき、Premiumは同じBonus BreakをReward VideoなしでFocus完了時に自動取得する。
+- UI上の「Premium Mode」はPremiumによるBonus Break自動取得特典の名称であり、別の認可状態ではない。`PhysicsCanvas`はPremium契約を判定せず、`isBonusBreakMode === true` かつBreak中であることだけをゲーム挙動へ使用する。
+- StandardがReward VideoからBonus Breakを取得できることは、Production Premium entitlementの偽装や漏えいではない。Premiumの差分は、動画なしの自動取得、広告UI抑制、連続再生権限である。
 
 Cloudflare Dashboard上のWAF、Bot、Rate Limiting設定はこのリポジトリから設定済みとは判定しない。利用可能な機能と料金は契約planおよび最新Consoleで確認する。
 

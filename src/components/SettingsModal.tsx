@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { onAuthStateChanged, reload, signOut, type User } from "firebase/auth";
 import { Languages, LogIn, LogOut, Settings, UserRound, Volume2, VolumeX, X } from "lucide-react";
 import { PrivacyModal } from "@/components/PrivacyModal";
+import { PremiumCancellationModal } from "@/components/PremiumCancellationModal";
 import { TermsModal } from "@/components/TermsModal";
 import { auth } from "@/lib/firebase";
+import { fetchPremiumStatus, type PremiumStatus } from "@/lib/premium";
 import { translations, type Language } from "@/utils/translations";
 
 type SettingsModalProps = {
@@ -17,6 +19,7 @@ type SettingsModalProps = {
   onSoundEnabledChange: (enabled: boolean) => void;
   isBreak: boolean;
   onOpenAuth: () => void;
+  onPremiumStatusChange: (isPremium: boolean) => void;
 };
 
 const languageOptions: Array<{ value: Language; labelKey: "japanese" | "english" }> = [
@@ -62,12 +65,15 @@ export function SettingsModal({
   onSoundEnabledChange,
   isBreak,
   onOpenAuth,
+  onPremiumStatusChange,
 }: SettingsModalProps) {
   const [user, setUser] = useState<User | null>(() => getVerifiedDisplayUser(auth?.currentUser ?? null));
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [termsOpen, setTermsOpen] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
+  const [premiumCancellationOpen, setPremiumCancellationOpen] = useState(false);
+  const [premiumStatus, setPremiumStatus] = useState<PremiumStatus | null>(null);
 
   useEffect(() => {
     if (!auth) {
@@ -120,7 +126,29 @@ export function SettingsModal({
     }
     setTermsOpen(false);
     setPrivacyOpen(false);
+    setPremiumCancellationOpen(false);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !user) {
+      setPremiumStatus(null);
+      setPremiumCancellationOpen(false);
+      return;
+    }
+    let disposed = false;
+    setPremiumStatus(null);
+    void fetchPremiumStatus(user)
+      .then((status) => {
+        if (!disposed) {
+          setPremiumStatus(status);
+          onPremiumStatusChange(status.isPremium);
+        }
+      })
+      .catch(() => {
+        if (!disposed) setPremiumStatus(null);
+      });
+    return () => { disposed = true; };
+  }, [isOpen, onPremiumStatusChange, user]);
 
   if (!isOpen) return null;
 
@@ -288,7 +316,7 @@ export function SettingsModal({
           )}
         </section>
 
-          <footer className={`mt-5 flex items-center justify-center gap-2 border-t pt-4 text-[11px] sm:text-xs ${isBreak ? "border-neutral-200 text-neutral-500" : "border-neutral-700 text-neutral-500"}`}>
+          <footer className={`mt-5 flex flex-wrap items-center justify-center gap-2 border-t pt-4 text-[11px] sm:text-xs ${isBreak ? "border-neutral-200 text-neutral-500" : "border-neutral-700 text-neutral-500"}`}>
             <button
               type="button"
               className="underline decoration-current/30 underline-offset-4 transition hover:text-current hover:decoration-current"
@@ -304,6 +332,24 @@ export function SettingsModal({
             >
               {t.legal.privacyLink}
             </button>
+            {premiumStatus?.isPremium && (
+              <>
+                <span aria-hidden="true">|</span>
+                {premiumStatus.cancelAtPeriodEnd ? (
+                  <span className="font-semibold text-emerald-600">
+                    {t.settings.premiumCancelScheduled}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="underline decoration-current/30 underline-offset-4 transition hover:text-current hover:decoration-current"
+                    onClick={() => setPremiumCancellationOpen(true)}
+                  >
+                    {t.settings.premiumCancelLink}
+                  </button>
+                )}
+              </>
+            )}
           </footer>
         </section>
       </div>
@@ -319,6 +365,18 @@ export function SettingsModal({
         onClose={() => setPrivacyOpen(false)}
         isBreak={isBreak}
         language={language}
+      />
+      <PremiumCancellationModal
+        isOpen={premiumCancellationOpen}
+        onClose={() => setPremiumCancellationOpen(false)}
+        isBreak={isBreak}
+        language={language}
+        user={user}
+        premiumUntil={premiumStatus?.premiumUntil ?? null}
+        onCanceled={(status) => {
+          setPremiumStatus(status);
+          onPremiumStatusChange(status.isPremium);
+        }}
       />
     </>
   );

@@ -26,6 +26,7 @@ export function ShopModal({
   onUseItem,
   onUnlockUfo,
   onUnlockOctopus,
+  onPremiumStatusChange,
   isBreak,
   language,
 }: LocalizedShopModalProps) {
@@ -75,7 +76,11 @@ export function ShopModal({
           <ShopItem title={t.shop.goldBoost} description={t.shop.goldBoostDescription} icon={<Sparkles size={16} />} count={itemCounts.goldBoost} active={activeBuffs.goldBoost} remainingSeconds={buffRemaining.goldBoost} onActivate={() => onUseItem("goldBoost")} light={isBreak} labels={t.shop} />
         </div>
         <p className={`mt-4 text-xs opacity-75 ${isBreak ? "text-neutral-600" : "text-neutral-400"}`}>{t.shop.breakNote}</p>
-        <PremiumPlanCard isBreak={isBreak} language={language} />
+        <PremiumPlanCard
+          isBreak={isBreak}
+          language={language}
+          onPremiumStatusChange={onPremiumStatusChange}
+        />
       </section>
     </div>
   );
